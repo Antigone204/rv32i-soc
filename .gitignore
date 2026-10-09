@@ -1,0 +1,11 @@
+tools/
+build/
+*.vcd
+*.fst
+*.fsdb
+obj_dir/
+__pycache__/
+.DS_Store
+# PDS generated
+platform/pango/prj/*/
+!platform/pango/prj/README.md
