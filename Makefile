@@ -6,16 +6,20 @@ BUILD       := build
 GCC_DIR     := $(firstword $(wildcard tools/xpack-riscv-none-elf-gcc-*/bin))
 CROSS       := $(GCC_DIR)/riscv-none-elf-
 
+RTL_CORE    := rtl/core/alu.v rtl/core/regfile.v
 RTL_SOC     := rtl/soc/uart_tx.v rtl/soc/uart_rx.v
 SMOKE_SRCS  := $(RTL_SOC) platform/pango/smoke_top.v
 
-.PHONY: help lint smoke-sim toolcheck clean
+.PHONY: help lint smoke-sim test-alu test-regfile unit-test toolcheck clean
 
 help:
-	@echo "make toolcheck   - 检查本地工具链"
-	@echo "make lint        - Verilator lint（零警告）"
-	@echo "make smoke-sim   - 平台冒烟测试的仿真（UART banner + 回显）"
-	@echo "make clean       - 清理 build/"
+	@echo "make toolcheck    - 检查本地工具链"
+	@echo "make lint         - Verilator lint（零警告检查）"
+	@echo "make test-alu     - 运行 ALU 单元测试"
+	@echo "make test-regfile - 运行通用寄存器堆单元测试"
+	@echo "make unit-test    - 运行全部单元测试"
+	@echo "make smoke-sim    - 平台冒烟测试的仿真（UART banner + 回显）"
+	@echo "make clean        - 清理 build/"
 
 toolcheck:
 	@verilator --version
@@ -25,6 +29,22 @@ toolcheck:
 
 lint:
 	verilator --lint-only -Wall --top-module smoke_top $(SMOKE_SRCS)
+	verilator --lint-only -Wall rtl/core/alu.v
+	verilator --lint-only -Wall rtl/core/regfile.v
+
+test-alu:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -I. -o $(BUILD)/tb_alu.vvp sim/unit/tb_alu.v rtl/core/alu.v
+	vvp -n $(BUILD)/tb_alu.vvp | tee $(BUILD)/test_alu.log
+	@grep -q "ALL ALU TESTS PASSED" $(BUILD)/test_alu.log
+
+test-regfile:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -o $(BUILD)/tb_regfile.vvp sim/unit/tb_regfile.v rtl/core/regfile.v
+	vvp -n $(BUILD)/tb_regfile.vvp | tee $(BUILD)/test_regfile.log
+	@grep -q "ALL REGFILE TESTS PASSED" $(BUILD)/test_regfile.log
+
+unit-test: test-alu test-regfile
 
 smoke-sim:
 	@mkdir -p $(BUILD)
