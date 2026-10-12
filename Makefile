@@ -17,6 +17,7 @@ help:
 	@echo "make lint         - Verilator lint（零警告检查）"
 	@echo "make test-alu     - 运行 ALU 单元测试"
 	@echo "make test-regfile - 运行通用寄存器堆单元测试"
+	@echo "make test-immgen  - 运行立即数生成单元测试"
 	@echo "make unit-test    - 运行全部单元测试"
 	@echo "make smoke-sim    - 平台冒烟测试的仿真（UART banner + 回显）"
 	@echo "make clean        - 清理 build/"
@@ -31,6 +32,7 @@ lint:
 	verilator --lint-only -Wall --top-module smoke_top $(SMOKE_SRCS)
 	verilator --lint-only -Wall rtl/core/alu.v
 	verilator --lint-only -Wall rtl/core/regfile.v
+	verilator --lint-only -Wall rtl/core/imm_gen.v
 
 test-alu:
 	@mkdir -p $(BUILD)
@@ -44,7 +46,13 @@ test-regfile:
 	vvp -n $(BUILD)/tb_regfile.vvp | tee $(BUILD)/test_regfile.log
 	@grep -q "ALL REGFILE TESTS PASSED" $(BUILD)/test_regfile.log
 
-unit-test: test-alu test-regfile
+test-immgen:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -o $(BUILD)/tb_imm_gen.vvp sim/unit/tb_imm_gen.v rtl/core/imm_gen.v
+	vvp -n $(BUILD)/tb_imm_gen.vvp | tee $(BUILD)/test_imm_gen.log
+	@grep -q "ALL IMM_GEN TESTS PASSED" $(BUILD)/test_imm_gen.log
+
+unit-test: test-alu test-regfile test-immgen
 
 smoke-sim:
 	@mkdir -p $(BUILD)
