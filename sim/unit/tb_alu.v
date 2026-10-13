@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 `default_nettype none
-`include "rtl/core/alu_ops.vh"
+`include "alu_ops.vh"
 
 module tb_alu;
     reg  [3:0]  alu_op;

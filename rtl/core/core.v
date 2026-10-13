@@ -74,20 +74,26 @@ module core (
         end
     end
 
-    assign imem_addr = if_pc;
+    // 改动 B: 取指地址改用"下一拍的 PC" (if_next_pc) 提前一拍去读，停顿时保持不变
+    assign imem_addr = (!rst_n)   ? 32'h0000_0000 :
+                       (stall_pc) ? if_pc :
+                       if_next_pc;
     assign imem_req  = 1'b1;
 
     // ---------------- 级间寄存器 1: IF/ID ----------------
     reg [31:0] if_id_pc;
     reg [31:0] if_id_inst;
+    reg        if_id_valid;
 
     always @(posedge clk) begin
         if (!rst_n || flush_if_id) begin
-            if_id_pc   <= 32'd0;
-            if_id_inst <= 32'h0000_0013; // 注入 NOP (addi x0, x0, 0)
+            if_id_pc    <= 32'd0;
+            if_id_inst  <= 32'h0000_0013; // 注入 NOP (addi x0, x0, 0)
+            if_id_valid <= 1'b0;
         end else if (!stall_if_id) begin
-            if_id_pc   <= if_pc;
-            if_id_inst <= imem_rdata;
+            if_id_pc    <= if_pc;
+            if_id_inst  <= imem_rdata;
+            if_id_valid <= 1'b1;
         end
     end
 
@@ -184,6 +190,7 @@ module core (
     reg        id_ex_branch;
     reg        id_ex_jal;
     reg        id_ex_jalr;
+    reg        id_ex_valid;
 
     always @(posedge clk) begin
         if (!rst_n || flush_id_ex) begin
@@ -205,6 +212,7 @@ module core (
             id_ex_branch     <= 1'b0;
             id_ex_jal        <= 1'b0;
             id_ex_jalr       <= 1'b0;
+            id_ex_valid      <= 1'b0;
         end else begin
             id_ex_pc         <= if_id_pc;
             id_ex_rs1_data   <= id_rs1_data;
@@ -224,6 +232,7 @@ module core (
             id_ex_branch     <= id_branch;
             id_ex_jal        <= id_jal;
             id_ex_jalr       <= id_jalr;
+            id_ex_valid      <= if_id_valid;
         end
     end
 
@@ -284,21 +293,24 @@ module core (
         endcase
     end
 
-    // 跳转有效与目标计算
-    assign branch_taken = (id_ex_branch & ex_br_cond) | id_ex_jal | id_ex_jalr;
+    // 跳转有效与目标计算 (受 id_ex_valid 门控)
+    assign branch_taken = id_ex_valid & ((id_ex_branch & ex_br_cond) | id_ex_jal | id_ex_jalr);
 
     wire [31:0] ex_jump_base = (id_ex_jalr) ? ex_fwd_val_a : id_ex_pc;
     assign branch_target     = (id_ex_jalr) ?
-                               ((ex_jump_base + id_ex_imm) & ~32'd1) :
-                               (ex_jump_base + id_ex_imm);
+                                ((ex_jump_base + id_ex_imm) & ~32'd1) :
+                                (ex_jump_base + id_ex_imm);
 
     // ---------------- 级间寄存器 3: EX/MEM ----------------
     reg [31:0] ex_mem_pc;
     reg [31:0] ex_mem_rs2_data;
     reg [2:0]  ex_mem_funct3;
-    reg        ex_mem_mem_read;
+    /* verilator lint_off UNUSEDSIGNAL */
+    reg        ex_mem_mem_read;   // 访存读地址在 EX 级提前发出，MEM 级保留此信号供后续总线握手使用
+    /* verilator lint_on UNUSEDSIGNAL */
     reg        ex_mem_mem_write;
     reg [1:0]  ex_mem_wb_src_sel;
+    reg        ex_mem_valid;
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -311,6 +323,7 @@ module core (
             ex_mem_mem_write  <= 1'b0;
             ex_mem_reg_write  <= 1'b0;
             ex_mem_wb_src_sel <= 2'd0;
+            ex_mem_valid      <= 1'b0;
         end else begin
             ex_mem_pc         <= id_ex_pc;
             ex_mem_alu_out    <= ex_alu_out;
@@ -321,14 +334,16 @@ module core (
             ex_mem_mem_write  <= id_ex_mem_write;
             ex_mem_reg_write  <= id_ex_reg_write;
             ex_mem_wb_src_sel <= id_ex_wb_src_sel;
+            ex_mem_valid      <= id_ex_valid;
         end
     end
 
     // =========================================================================
     // 4. MEM (Memory Access - 访存级)
     // =========================================================================
-    assign dmem_addr = ex_mem_alu_out;
-    assign dmem_req  = ex_mem_mem_read | ex_mem_mem_write;
+    // 改动 B: 访存读地址在 EX 级发出 (ex_alu_out)，写地址保持在 MEM 级 (ex_mem_alu_out)
+    assign dmem_addr = (id_ex_mem_read) ? ex_alu_out : ex_mem_alu_out;
+    assign dmem_req  = id_ex_mem_read | ex_mem_mem_write;
 
     // ---------------- Store 字节对齐与使能生成 ----------------
     wire [1:0] mem_byte_offset = ex_mem_alu_out[1:0];
@@ -336,7 +351,7 @@ module core (
     always @(*) begin
         dmem_byte_we = 4'b0000;
         dmem_wdata   = 32'd0;
-        if (ex_mem_mem_write) begin
+        if (ex_mem_valid && ex_mem_mem_write) begin
             case (ex_mem_funct3)
                 3'b000: begin // SB (Store Byte)
                     case (mem_byte_offset)
@@ -410,6 +425,7 @@ module core (
     reg [4:0]  mem_wb_rd;
     reg        mem_wb_reg_write;
     reg [1:0]  mem_wb_wb_src_sel;
+    reg        mem_wb_valid;
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -419,6 +435,7 @@ module core (
             mem_wb_rd         <= 5'd0;
             mem_wb_reg_write  <= 1'b0;
             mem_wb_wb_src_sel <= 2'd0;
+            mem_wb_valid      <= 1'b0;
         end else begin
             mem_wb_pc         <= ex_mem_pc;
             mem_wb_alu_out    <= ex_mem_alu_out;
@@ -426,13 +443,14 @@ module core (
             mem_wb_rd         <= ex_mem_rd;
             mem_wb_reg_write  <= ex_mem_reg_write;
             mem_wb_wb_src_sel <= ex_mem_wb_src_sel;
+            mem_wb_valid      <= ex_mem_valid;
         end
     end
 
     // =========================================================================
     // 5. WB (Write Back - 写回级)
     // =========================================================================
-    assign wb_reg_write = mem_wb_reg_write;
+    assign wb_reg_write = mem_wb_valid & mem_wb_reg_write;
     assign wb_rd_addr   = mem_wb_rd;
 
     wire [31:0] mem_wb_pc_plus_4 = mem_wb_pc + 32'd4;
@@ -448,8 +466,8 @@ module core (
     end
     assign wb_final_data = wb_mux_data;
 
-    // 提交追踪输出 (用于 DiffTest 和跟踪)
-    assign wb_valid = mem_wb_reg_write & (mem_wb_rd != 5'd0);
+    // 改动 A: 提交追踪输出改看 mem_wb_valid，不再看"是否写寄存器"
+    assign wb_valid = mem_wb_valid;
     assign wb_pc    = mem_wb_pc;
     assign wb_rd    = mem_wb_rd;
     assign wb_wdata = wb_final_data;
@@ -461,9 +479,9 @@ module core (
         .id_ex_rs1       (id_ex_rs1),
         .id_ex_rs2       (id_ex_rs2),
         .ex_mem_rd       (ex_mem_rd),
-        .ex_mem_reg_write(ex_mem_reg_write),
+        .ex_mem_reg_write(ex_mem_valid & ex_mem_reg_write),
         .mem_wb_rd       (mem_wb_rd),
-        .mem_wb_reg_write(mem_wb_reg_write),
+        .mem_wb_reg_write(mem_wb_valid & mem_wb_reg_write),
         .forward_a       (forward_a),
         .forward_b       (forward_b)
     );
@@ -471,11 +489,11 @@ module core (
     hazard_unit u_hazard (
         .if_id_rs1      (id_rs1),
         .if_id_rs2      (id_rs2),
-        .id_ex_mem_read (id_ex_mem_read),
+        .id_ex_mem_read (id_ex_valid & id_ex_mem_read),
         .id_ex_rd       (id_ex_rd),
         .branch_taken   (branch_taken),
-        .jal            (id_ex_jal),
-        .jalr           (id_ex_jalr),
+        .jal            (id_ex_valid & id_ex_jal),
+        .jalr           (id_ex_valid & id_ex_jalr),
         .stall_pc       (stall_pc),
         .stall_if_id    (stall_if_id),
         .flush_if_id    (flush_if_id),

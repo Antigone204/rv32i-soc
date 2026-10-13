@@ -1,5 +1,5 @@
 `default_nettype none
-`include "rtl/core/alu_ops.vh"
+`include "alu_ops.vh"
 
 // -----------------------------------------------------------------------------
 // decoder — RV32I 指令主控制译码器 (Instruction Decoder & Control Unit)

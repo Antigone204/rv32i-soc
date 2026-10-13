@@ -24,7 +24,9 @@
 // -----------------------------------------------------------------------------
 module regfile (
     input  wire        clk,
-    input  wire        rst_n,
+    /* verilator lint_off UNUSEDSIGNAL */
+    input  wire        rst_n, // 取消寄存器复位以推断 FPGA 分布式 RAM (LUTRAM)，保留端口以兼容顶层连线
+    /* verilator lint_on UNUSEDSIGNAL */
 
     // 读端口 1 (rs1)
     input  wire [4:0]  raddr1,
@@ -40,15 +42,10 @@ module regfile (
     input  wire [31:0] wdata
 );
     reg [31:0] regs [0:31];
-    integer i;
 
     // 同步写操作 (x0 永远不写)
     always @(posedge clk) begin
-        if (!rst_n) begin
-            for (i = 0; i < 32; i = i + 1) begin
-                regs[i] <= 32'd0;
-            end
-        end else if (we && (waddr != 5'd0)) begin
+        if (we && (waddr != 5'd0)) begin
             regs[waddr] <= wdata;
         end
     end

@@ -11,12 +11,13 @@ RTL_CORE    := rtl/core/core.v rtl/core/alu.v rtl/core/regfile.v rtl/core/imm_ge
 RTL_SOC     := rtl/soc/uart_tx.v rtl/soc/uart_rx.v
 SMOKE_SRCS  := $(RTL_SOC) platform/pango/smoke_top.v
 
-.PHONY: help lint smoke-sim test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard unit-test toolcheck clean
+.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard unit-test toolcheck clean
 
 help:
 	@echo "make toolcheck    - 检查本地工具链"
 	@echo "make lint         - Verilator lint（零警告检查）"
 	@echo "make unit-test    - 运行全部单元测试"
+	@echo "make test-core    - 运行 5 级流水线集成自检测试"
 	@echo "make smoke-sim    - 平台冒烟测试的仿真（UART banner + 回显）"
 	@echo "make clean        - 清理 build/"
 

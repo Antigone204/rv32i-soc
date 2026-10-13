@@ -61,20 +61,24 @@ module tb_core_basic;
     reg [31:0] imem [0:63];
     reg [31:0] dmem [0:63];
 
-    // 指令读 (纯组合异步读出，模拟单周期指令 RAM)
-    always @(*) begin
+    // 指令读 (同步时钟读出，模拟 FPGA BRAM 1 拍读延迟)
+    always @(posedge clk) begin
         if (imem_addr[31:2] < 64)
-            imem_rdata = imem[imem_addr[31:2]];
+            imem_rdata <= imem[imem_addr[31:2]];
         else
-            imem_rdata = 32'h0000_0013; // NOP
+            imem_rdata <= 32'h0000_0013; // NOP
     end
 
-    // 数据读写
-    always @(*) begin
-        if (dmem_addr[31:2] < 64)
-            dmem_rdata = dmem[dmem_addr[31:2]];
-        else
-            dmem_rdata = 32'd0;
+    // 数据读 (同步时钟读出，模拟 FPGA BRAM 1 拍读延迟；支持 WRITE_FIRST 直通)
+    always @(posedge clk) begin
+        if (dmem_addr[31:2] < 64) begin
+            if (dmem_req && (|dmem_byte_we))
+                dmem_rdata <= dmem_wdata;
+            else
+                dmem_rdata <= dmem[dmem_addr[31:2]];
+        end else begin
+            dmem_rdata <= 32'd0;
+        end
     end
 
     integer k;
@@ -134,8 +138,12 @@ module tb_core_basic;
         // 启动复位
         #15 rst_n = 1'b1;
 
-        // 运行 40 个时钟周期，等待程序流水执行完毕
-        #400;
+        // 等待测试程序最后一条指令 (PC=0x2C) 在 WB 级有效提交
+        @(posedge clk);
+        while (!(wb_valid && wb_pc == 32'h0000_002c)) begin
+            @(posedge clk);
+        end
+        #1;
 
         $display("\n================ 结果状态核验 ================");
         // 验证各通用寄存器最终状态 (通过读取 regfile 内部 regs)
@@ -201,6 +209,14 @@ module tb_core_basic;
             errors = errors + 1;
         end else begin
             $display("PASS: x7 = 1 (跳转目标正常执行)");
+        end
+
+        // 验证提交指令数是否恰好为 10 条 (包含 SW 和 2 条 BEQ，排除被冲刷指令)
+        if (perf_instret !== 32'd10) begin
+            $display("FAIL: perf_instret = %0d (exp 10)", perf_instret);
+            errors = errors + 1;
+        end else begin
+            $display("PASS: perf_instret = 10 (有效提交指令数精准匹配 10 条)");
         end
 
         $display("----------------------------------------------");

@@ -1,5 +1,5 @@
 `default_nettype none
-`include "rtl/core/alu_ops.vh"
+`include "alu_ops.vh"
 
 // -----------------------------------------------------------------------------
 // alu — RV32I 32 位算术逻辑单元
