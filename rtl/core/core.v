@@ -33,6 +33,7 @@ module core (
 
     // ---------------- 提交追踪接口 (DiffTest / 调试用) ----------------
     output wire        wb_valid,
+    output wire        wb_we,
     output wire [31:0] wb_pc,
     output wire [4:0]  wb_rd,
     output wire [31:0] wb_wdata,
@@ -48,8 +49,11 @@ module core (
     // 冒险控制信号
     wire stall_pc;
     wire stall_if_id;
+    wire stall_id_ex;
     wire flush_if_id;
     wire flush_id_ex;
+    wire flush_ex_mem;
+    wire structural_hazard;
 
     // 分支与跳转信号 (在 EX 级生成)
     wire        branch_taken;
@@ -213,7 +217,7 @@ module core (
             id_ex_jal        <= 1'b0;
             id_ex_jalr       <= 1'b0;
             id_ex_valid      <= 1'b0;
-        end else begin
+        end else if (!stall_id_ex) begin
             id_ex_pc         <= if_id_pc;
             id_ex_rs1_data   <= id_rs1_data;
             id_ex_rs2_data   <= id_rs2_data;
@@ -313,7 +317,7 @@ module core (
     reg        ex_mem_valid;
 
     always @(posedge clk) begin
-        if (!rst_n) begin
+        if (!rst_n || flush_ex_mem) begin
             ex_mem_pc         <= 32'd0;
             ex_mem_alu_out    <= 32'd0;
             ex_mem_rs2_data   <= 32'd0;
@@ -341,9 +345,10 @@ module core (
     // =========================================================================
     // 4. MEM (Memory Access - 访存级)
     // =========================================================================
-    // 改动 B: 访存读地址在 EX 级发出 (ex_alu_out)，写地址保持在 MEM 级 (ex_mem_alu_out)
-    assign dmem_addr = (id_ex_mem_read) ? ex_alu_out : ex_mem_alu_out;
-    assign dmem_req  = id_ex_mem_read | ex_mem_mem_write;
+    // 内存总线仲裁：若 MEM 级是有效 Store，端口属于 Store (ex_mem_alu_out)；
+    // 否则若 EX 级是有效 Load，发出读地址 (ex_alu_out)。结构冒险时本拍端口让给 Store，Load 暂停 1 拍。
+    assign dmem_addr = (ex_mem_valid & ex_mem_mem_write) ? ex_mem_alu_out : ex_alu_out;
+    assign dmem_req  = (ex_mem_valid & ex_mem_mem_write) | (id_ex_valid & id_ex_mem_read & !structural_hazard);
 
     // ---------------- Store 字节对齐与使能生成 ----------------
     wire [1:0] mem_byte_offset = ex_mem_alu_out[1:0];
@@ -466,8 +471,9 @@ module core (
     end
     assign wb_final_data = wb_mux_data;
 
-    // 改动 A: 提交追踪输出改看 mem_wb_valid，不再看"是否写寄存器"
+    // 提交追踪输出 (用于 DiffTest 和跟踪)
     assign wb_valid = mem_wb_valid;
+    assign wb_we    = wb_reg_write & (wb_rd_addr != 5'd0); // 真正写有效寄存器 (非 x0) 时为 1
     assign wb_pc    = mem_wb_pc;
     assign wb_rd    = mem_wb_rd;
     assign wb_wdata = wb_final_data;
@@ -487,17 +493,21 @@ module core (
     );
 
     hazard_unit u_hazard (
-        .if_id_rs1      (id_rs1),
-        .if_id_rs2      (id_rs2),
-        .id_ex_mem_read (id_ex_valid & id_ex_mem_read),
-        .id_ex_rd       (id_ex_rd),
-        .branch_taken   (branch_taken),
-        .jal            (id_ex_valid & id_ex_jal),
-        .jalr           (id_ex_valid & id_ex_jalr),
-        .stall_pc       (stall_pc),
-        .stall_if_id    (stall_if_id),
-        .flush_if_id    (flush_if_id),
-        .flush_id_ex    (flush_id_ex)
+        .if_id_rs1        (id_rs1),
+        .if_id_rs2        (id_rs2),
+        .id_ex_mem_read   (id_ex_valid & id_ex_mem_read),
+        .id_ex_rd         (id_ex_rd),
+        .ex_mem_mem_write (ex_mem_valid & ex_mem_mem_write),
+        .branch_taken     (branch_taken),
+        .jal              (id_ex_valid & id_ex_jal),
+        .jalr             (id_ex_valid & id_ex_jalr),
+        .stall_pc         (stall_pc),
+        .stall_if_id      (stall_if_id),
+        .stall_id_ex      (stall_id_ex),
+        .flush_if_id      (flush_if_id),
+        .flush_id_ex      (flush_id_ex),
+        .flush_ex_mem     (flush_ex_mem),
+        .structural_hazard(structural_hazard)
     );
 
     // =========================================================================

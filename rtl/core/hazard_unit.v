@@ -25,9 +25,12 @@ module hazard_unit (
     input  wire [4:0] if_id_rs1,
     input  wire [4:0] if_id_rs2,
 
-    // EX 级当前指令的信息 (检测 Load-Use)
+    // EX 级当前指令的信息 (检测 Load-Use 及结构冒险)
     input  wire       id_ex_mem_read,
     input  wire [4:0] id_ex_rd,
+
+    // MEM 级当前指令的信息 (检测 SW->LW 结构冒险)
+    input  wire       ex_mem_mem_write,
 
     // 分支/跳转触发信号 (来自 EX 级)
     input  wire       branch_taken,
@@ -37,13 +40,22 @@ module hazard_unit (
     // 控制输出：流水线停顿 (Stall) 信号 (高电平有效)
     output reg        stall_pc,
     output reg        stall_if_id,
+    output reg        stall_id_ex,
 
     // 控制输出：流水线清零冲刷 (Flush) 信号 (高电平有效)
     output reg        flush_if_id,
-    output reg        flush_id_ex
+    output reg        flush_id_ex,
+    output reg        flush_ex_mem,
+
+    // 状态输出：结构冒险发生中 (供 core.v 仲裁 dmem 端口)
+    output wire       structural_hazard
 );
     // 判断是否发生跳转 (控制冒险)
     wire jump_or_branch = branch_taken | jal | jalr;
+
+    // 判断是否发生 SW 紧跟 LW 的内存端口结构冒险
+    // 条件：MEM 级为有效 Store (写内存) 且 EX 级为有效 Load (提早发出读地址)
+    assign structural_hazard = ex_mem_mem_write & id_ex_mem_read;
 
     // 判断是否发生 Load-Use 冲突
     // 条件：EX 级读内存 + 目标寄存器非 x0 + 目标寄存器与 ID 级源寄存器重合
@@ -52,17 +64,26 @@ module hazard_unit (
 
     always @(*) begin
         // 默认状态：流水线全速自由前进
-        stall_pc    = 1'b0;
-        stall_if_id = 1'b0;
-        flush_if_id = 1'b0;
-        flush_id_ex = 1'b0;
+        stall_pc          = 1'b0;
+        stall_if_id       = 1'b0;
+        stall_id_ex       = 1'b0;
+        flush_if_id       = 1'b0;
+        flush_id_ex       = 1'b0;
+        flush_ex_mem      = 1'b0;
 
-        // 1. 控制冒险处理 (优先级最高：跳转成立时，必须无条件冲刷错误指令)
+        // 1. 控制冒险处理 (优先级最高：跳转成立时，必须无条件冲刷错误路径指令)
         if (jump_or_branch) begin
             flush_if_id = 1'b1; // 清空 IF/ID 寄存器
             flush_id_ex = 1'b1; // 清空 ID/EX 寄存器
         end
-        // 2. Load-Use 冒险处理 (停顿 1 拍并注入气泡)
+        // 2. SW 紧跟 LW 结构冒险处理 (停顿 1 拍：冻结 PC、IF/ID、ID/EX，向 EX/MEM 注入气泡，端口全让给 Store)
+        else if (structural_hazard) begin
+            stall_pc     = 1'b1; // 冻结 PC
+            stall_if_id  = 1'b1; // 冻结 IF/ID
+            stall_id_ex  = 1'b1; // 冻结 ID/EX (Load 指令保持在 EX 级等待)
+            flush_ex_mem = 1'b1; // 向 EX/MEM 注入气泡 (清零控制信号)
+        end
+        // 3. Load-Use 冒险处理 (停顿 1 拍并注入气泡到 ID/EX)
         else if (load_use_hazard) begin
             stall_pc    = 1'b1; // 冻结 PC
             stall_if_id = 1'b1; // 保持 IF/ID 指令不变

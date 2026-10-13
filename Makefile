@@ -74,6 +74,9 @@ test-core:
 	iverilog -g2012 -Irtl/core -o $(BUILD)/tb_core_basic.vvp sim/core/tb_core_basic.v $(RTL_CORE)
 	vvp -n $(BUILD)/tb_core_basic.vvp | tee $(BUILD)/test_core_basic.log
 	@grep -q "5-STAGE RV32I CORE BASIC VERIFICATION PASSED" $(BUILD)/test_core_basic.log
+	iverilog -g2012 -Irtl/core -o $(BUILD)/tb_core_hazard_mem.vvp sim/core/tb_core_hazard_mem.v $(RTL_CORE)
+	vvp -n $(BUILD)/tb_core_hazard_mem.vvp | tee $(BUILD)/test_core_hazard_mem.log
+	@grep -q "SW-LW HAZARD DIRECTED VERIFICATION PASSED" $(BUILD)/test_core_hazard_mem.log
 
 smoke-sim:
 	@mkdir -p $(BUILD)

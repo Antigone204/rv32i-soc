@@ -31,6 +31,7 @@ module tb_core_basic;
 
     // 追踪接口
     wire        wb_valid;
+    wire        wb_we;
     wire [31:0] wb_pc;
     wire [4:0]  wb_rd;
     wire [31:0] wb_wdata;
@@ -50,6 +51,7 @@ module tb_core_basic;
         .dmem_req    (dmem_req),
         .dmem_rdata  (dmem_rdata),
         .wb_valid    (wb_valid),
+        .wb_we       (wb_we),
         .wb_pc       (wb_pc),
         .wb_rd       (wb_rd),
         .wb_wdata    (wb_wdata),
@@ -69,16 +71,12 @@ module tb_core_basic;
             imem_rdata <= 32'h0000_0013; // NOP
     end
 
-    // 数据读 (同步时钟读出，模拟 FPGA BRAM 1 拍读延迟；支持 WRITE_FIRST 直通)
+    // 数据读 (真实 FPGA BRAM 同步时钟读出，绝不添加迁就设计的写穿旁路)
     always @(posedge clk) begin
-        if (dmem_addr[31:2] < 64) begin
-            if (dmem_req && (|dmem_byte_we))
-                dmem_rdata <= dmem_wdata;
-            else
-                dmem_rdata <= dmem[dmem_addr[31:2]];
-        end else begin
+        if (dmem_addr[31:2] < 64)
+            dmem_rdata <= dmem[dmem_addr[31:2]];
+        else
             dmem_rdata <= 32'd0;
-        end
     end
 
     integer k;
@@ -94,8 +92,13 @@ module tb_core_basic;
     // ---------------- 打印提交跟踪日志 ----------------
     always @(posedge clk) begin
         if (rst_n && wb_valid) begin
-            $display("  [COMMIT] Cycle=%0d PC=0x%08h W_REG=x%-2d W_DATA=0x%08h (%0d)",
-                     perf_cycle, wb_pc, wb_rd, wb_wdata, $signed(wb_wdata));
+            if (wb_we) begin
+                $display("  [COMMIT] Cycle=%0d PC=0x%08h W_REG=x%-2d W_DATA=0x%08h (%0d)",
+                         perf_cycle, wb_pc, wb_rd, wb_wdata, $signed(wb_wdata));
+            end else begin
+                $display("  [COMMIT] Cycle=%0d PC=0x%08h",
+                         perf_cycle, wb_pc);
+            end
         end
     end
 
