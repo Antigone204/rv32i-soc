@@ -33,6 +33,7 @@ lint:
 	verilator --lint-only -Wall rtl/core/alu.v
 	verilator --lint-only -Wall rtl/core/regfile.v
 	verilator --lint-only -Wall rtl/core/imm_gen.v
+	verilator --lint-only -Wall -I. rtl/core/decoder.v
 
 test-alu:
 	@mkdir -p $(BUILD)
@@ -52,7 +53,13 @@ test-immgen:
 	vvp -n $(BUILD)/tb_imm_gen.vvp | tee $(BUILD)/test_imm_gen.log
 	@grep -q "ALL IMM_GEN TESTS PASSED" $(BUILD)/test_imm_gen.log
 
-unit-test: test-alu test-regfile test-immgen
+test-decoder:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -I. -o $(BUILD)/tb_decoder.vvp sim/unit/tb_decoder.v rtl/core/decoder.v
+	vvp -n $(BUILD)/tb_decoder.vvp | tee $(BUILD)/test_decoder.log
+	@grep -q "ALL DECODER TESTS PASSED" $(BUILD)/test_decoder.log
+
+unit-test: test-alu test-regfile test-immgen test-decoder
 
 smoke-sim:
 	@mkdir -p $(BUILD)
