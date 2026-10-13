@@ -196,6 +196,10 @@ module core (
     reg        id_ex_jalr;
     reg        id_ex_valid;
 
+    // 前推多路选择器输出声明 (供 ID/EX 停顿锁存及 EX 计算使用)
+    reg [31:0] ex_fwd_val_a;
+    reg [31:0] ex_fwd_val_b;
+
     always @(posedge clk) begin
         if (!rst_n || flush_id_ex) begin
             id_ex_pc         <= 32'd0;
@@ -217,7 +221,11 @@ module core (
             id_ex_jal        <= 1'b0;
             id_ex_jalr       <= 1'b0;
             id_ex_valid      <= 1'b0;
-        end else if (!stall_id_ex) begin
+        end else if (stall_id_ex) begin
+            // BUG-003: 停顿期间锁存当拍前推结果，防止前推源在后续周期写回后离开流水线导致操作数丢失
+            id_ex_rs1_data   <= ex_fwd_val_a;
+            id_ex_rs2_data   <= ex_fwd_val_b;
+        end else begin
             id_ex_pc         <= if_id_pc;
             id_ex_rs1_data   <= id_rs1_data;
             id_ex_rs2_data   <= id_rs2_data;
@@ -248,7 +256,7 @@ module core (
     reg        ex_mem_reg_write;
     reg [31:0] ex_mem_alu_out;
 
-    reg [31:0] ex_fwd_val_a;
+    // 前推多路选择器逻辑 (3-to-1)
     always @(*) begin
         case (forward_a)
             2'b10:   ex_fwd_val_a = ex_mem_alu_out; // EX-EX 前推
@@ -257,7 +265,6 @@ module core (
         endcase
     end
 
-    reg [31:0] ex_fwd_val_b;
     always @(*) begin
         case (forward_b)
             2'b10:   ex_fwd_val_b = ex_mem_alu_out; // EX-EX 前推

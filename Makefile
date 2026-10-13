@@ -77,6 +77,9 @@ test-core:
 	iverilog -g2012 -Irtl/core -o $(BUILD)/tb_core_hazard_mem.vvp sim/core/tb_core_hazard_mem.v $(RTL_CORE)
 	vvp -n $(BUILD)/tb_core_hazard_mem.vvp | tee $(BUILD)/test_core_hazard_mem.log
 	@grep -q "SW-LW HAZARD DIRECTED VERIFICATION PASSED" $(BUILD)/test_core_hazard_mem.log
+	iverilog -g2012 -Irtl/core -o $(BUILD)/tb_probe_stallfwd.vvp sim/core/tb_probe_stallfwd.v $(RTL_CORE)
+	vvp -n $(BUILD)/tb_probe_stallfwd.vvp | tee $(BUILD)/test_probe_stallfwd.log
+	@grep -q "BUG-003 DIRECTED TEST PASSED" $(BUILD)/test_probe_stallfwd.log
 
 smoke-sim:
 	@mkdir -p $(BUILD)
