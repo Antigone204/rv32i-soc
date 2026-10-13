@@ -35,6 +35,7 @@ lint:
 	verilator --lint-only -Wall rtl/core/imm_gen.v
 	verilator --lint-only -Wall -Irtl/core rtl/core/decoder.v
 	verilator --lint-only -Wall rtl/core/forwarding_unit.v
+	verilator --lint-only -Wall rtl/core/hazard_unit.v
 
 test-alu:
 	@mkdir -p $(BUILD)
@@ -66,7 +67,13 @@ test-forwarding:
 	vvp -n $(BUILD)/tb_forwarding_unit.vvp | tee $(BUILD)/test_forwarding.log
 	@grep -q "ALL FORWARDING UNIT TESTS PASSED" $(BUILD)/test_forwarding.log
 
-unit-test: test-alu test-regfile test-immgen test-decoder test-forwarding
+test-hazard:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -o $(BUILD)/tb_hazard_unit.vvp sim/unit/tb_hazard_unit.v rtl/core/hazard_unit.v
+	vvp -n $(BUILD)/tb_hazard_unit.vvp | tee $(BUILD)/test_hazard.log
+	@grep -q "ALL HAZARD UNIT TESTS PASSED" $(BUILD)/test_hazard.log
+
+unit-test: test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard
 
 smoke-sim:
 	@mkdir -p $(BUILD)
