@@ -68,6 +68,12 @@ test-hazard:
 
 unit-test: test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard
 
+test-core:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -Irtl/core -o $(BUILD)/tb_core_basic.vvp sim/core/tb_core_basic.v $(RTL_CORE)
+	vvp -n $(BUILD)/tb_core_basic.vvp | tee $(BUILD)/test_core_basic.log
+	@grep -q "5-STAGE RV32I CORE BASIC VERIFICATION PASSED" $(BUILD)/test_core_basic.log
+
 smoke-sim:
 	@mkdir -p $(BUILD)
 	iverilog -g2012 -o $(BUILD)/tb_smoke.vvp sim/smoke/tb_smoke.v $(SMOKE_SRCS)
