@@ -30,14 +30,15 @@ toolcheck:
 
 lint:
 	verilator --lint-only -Wall --top-module smoke_top $(SMOKE_SRCS)
-	verilator --lint-only -Wall rtl/core/alu.v
+	verilator --lint-only -Wall -Irtl/core rtl/core/alu.v
 	verilator --lint-only -Wall rtl/core/regfile.v
 	verilator --lint-only -Wall rtl/core/imm_gen.v
-	verilator --lint-only -Wall -I. rtl/core/decoder.v
+	verilator --lint-only -Wall -Irtl/core rtl/core/decoder.v
+	verilator --lint-only -Wall rtl/core/forwarding_unit.v
 
 test-alu:
 	@mkdir -p $(BUILD)
-	iverilog -g2012 -I. -o $(BUILD)/tb_alu.vvp sim/unit/tb_alu.v rtl/core/alu.v
+	iverilog -g2012 -Irtl/core -o $(BUILD)/tb_alu.vvp sim/unit/tb_alu.v rtl/core/alu.v
 	vvp -n $(BUILD)/tb_alu.vvp | tee $(BUILD)/test_alu.log
 	@grep -q "ALL ALU TESTS PASSED" $(BUILD)/test_alu.log
 
@@ -55,11 +56,17 @@ test-immgen:
 
 test-decoder:
 	@mkdir -p $(BUILD)
-	iverilog -g2012 -I. -o $(BUILD)/tb_decoder.vvp sim/unit/tb_decoder.v rtl/core/decoder.v
+	iverilog -g2012 -Irtl/core -o $(BUILD)/tb_decoder.vvp sim/unit/tb_decoder.v rtl/core/decoder.v
 	vvp -n $(BUILD)/tb_decoder.vvp | tee $(BUILD)/test_decoder.log
 	@grep -q "ALL DECODER TESTS PASSED" $(BUILD)/test_decoder.log
 
-unit-test: test-alu test-regfile test-immgen test-decoder
+test-forwarding:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -o $(BUILD)/tb_forwarding_unit.vvp sim/unit/tb_forwarding_unit.v rtl/core/forwarding_unit.v
+	vvp -n $(BUILD)/tb_forwarding_unit.vvp | tee $(BUILD)/test_forwarding.log
+	@grep -q "ALL FORWARDING UNIT TESTS PASSED" $(BUILD)/test_forwarding.log
+
+unit-test: test-alu test-regfile test-immgen test-decoder test-forwarding
 
 smoke-sim:
 	@mkdir -p $(BUILD)
