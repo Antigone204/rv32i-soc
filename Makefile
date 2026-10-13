@@ -11,13 +11,15 @@ RTL_CORE    := rtl/core/core.v rtl/core/alu.v rtl/core/regfile.v rtl/core/imm_ge
 RTL_SOC     := rtl/soc/uart_tx.v rtl/soc/uart_rx.v
 SMOKE_SRCS  := $(RTL_SOC) platform/pango/smoke_top.v
 
-.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard unit-test toolcheck clean
+.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard unit-test isa-test difftest toolcheck clean
 
 help:
 	@echo "make toolcheck    - 检查本地工具链"
 	@echo "make lint         - Verilator lint（零警告检查）"
 	@echo "make unit-test    - 运行全部单元测试"
 	@echo "make test-core    - 运行 5 级流水线集成自检测试"
+	@echo "make isa-test     - 运行官方 RV32UI 全套自动化指令集测试"
+	@echo "make difftest     - 运行与 Spike 的差分比对验证"
 	@echo "make smoke-sim    - 平台冒烟测试的仿真（UART banner + 回显）"
 	@echo "make clean        - 清理 build/"
 
@@ -87,5 +89,16 @@ smoke-sim:
 	vvp -n $(BUILD)/tb_smoke.vvp | tee $(BUILD)/smoke.log
 	@grep -q "ALL TESTS PASSED" $(BUILD)/smoke.log
 
+$(BUILD)/tb_isa.vvp: sim/isa/tb_isa.v $(RTL_CORE)
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -Irtl/core -o $@ $^
+
+isa-test: $(BUILD)/tb_isa.vvp
+	python3 sim/isa/run_isa_tests.py
+
+difftest: $(BUILD)/tb_isa.vvp
+	python3 sim/difftest/spike_diff.py
+
 clean:
 	rm -rf $(BUILD) obj_dir
+
