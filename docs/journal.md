@@ -98,3 +98,32 @@
 3. **真实 BRAM 存储器模型与字节流装配**：
    - `tb_isa.v` 严格遵照 FPGA 同步 BRAM 1 拍读延迟模型；
    - 正确规避了 Verilog `$readmemh` 直接读取 8 位字节流 Hex 填入 32 位字数组时的高位补零陷阱，在 Testbench 中进行了精确的小端字拼接装配。
+
+---
+
+## 2026-10-14 SoC 总线与外设规格设计 (阶段 S1a)
+
+### 阶段目标
+
+为 RV32I 流水线核编写 SoC 集成规格说明书，定义总线协议、存储器映射与外设寄存器接口，为后续 RTL 实现（S1b）和 CoreMark 移植（S1d）铺路。
+
+### 关键设计决策
+
+1. **总线协议选择 Wishbone B4 Classic Cycle**：
+   - 开源标准（OpenCores 维护），文档公开完整；
+   - Classic 单拍传输模式与现有 BRAM 1 拍延迟完美匹配，S1 阶段无需引入流水线停顿扩展；
+   - 未来可平滑升级至 Pipelined / Block Cycle 模式对接 Cache 与 DDR3。
+
+2. **内存映射参照 SiFive FE310（RISC-V 生态事实标准）**：
+   - SRAM `0x0000_0000`（兼容现有 ISA 测试的零起始地址）；
+   - CLINT `0x0200_0000`（RISC-V 特权级规范硬性约定，工具链默认）；
+   - UART `0x1001_0000`（SiFive 惯例，留出扩展空间）；
+   - DDR3 `0x8000_0000`（RISC-V 标准 DRAM 基址，与 Spike 兼容）。
+
+3. **指令端口不走 Wishbone，直连 SRAM Port A**：
+   - 利用 FPGA 双端口 BRAM 物理特性，Port A 取指 + Port B 数据访问零冲突；
+   - 消除取指与数据访问的总线仲裁开销，保证取指零等待状态。
+
+### 交付物
+
+- `docs/spec/soc.md`：完整 SoC 规格说明书（9 章，含 Wishbone 协议要点、存储器映射、6 个 RTL 模块接口定义、寄存器映射、验证计划与扩展路径）。

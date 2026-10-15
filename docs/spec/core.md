@@ -130,7 +130,7 @@ input  wire [31:0] dmem_rdata    // 读出数据 (同步 1 拍延迟返回)
 
 ## 6. 验证与验收准则
 
-1. 单指令与组合逻辑单元级仿真通过 (`make unit-test`)；
-2. 5 级流水线集成自检测试通过 (`make test-core`，覆盖 RAW 前推、Load-Use 停顿、分支冲刷、访存，提交指令数=10)；
-3. 运行官方 `riscv-tests` (rv32ui-p-*) 全部 40 余项单元测试，全部 PASS；【待实现】
-4. 基于 Spike 的 DiffTest 差分验证：在每条指令写回阶段打印 PC、目标寄存器及写回数据，与 Spike 单步执行严格一致。【待实现】
+1. 单指令与组合逻辑单元级仿真通过 (`make unit-test`)；✅ 6/6 PASS
+2. 5 级流水线集成自检测试通过 (`make test-core`，覆盖 RAW 前推、Load-Use 停顿、分支冲刷、访存，提交指令数=10)；✅ 3/3 PASS
+3. 运行官方 `riscv-tests` (rv32ui-p-*) 全部 38 项单元测试，全部 PASS；✅ 38/38 PASS（`make isa-test`，CPI 1.07~1.28）
+4. 基于 Spike 的 DiffTest 差分验证：在每条指令写回阶段打印 PC、目标寄存器及写回数据，与 Spike 单步执行严格一致。✅ 38/38 MATCH（`make difftest`，0 Mismatch）
