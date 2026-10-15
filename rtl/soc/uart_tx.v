@@ -21,6 +21,9 @@ module uart_tx #(
     output reg        txd
 );
     localparam integer CW = $clog2(CLKS_PER_BIT);
+    /* verilator lint_off WIDTHTRUNC */
+    localparam [CW-1:0] CNT_MAX = (CLKS_PER_BIT - 1);
+    /* verilator lint_on  WIDTHTRUNC */
 
     reg [CW-1:0] clk_cnt;
     reg [3:0]    bit_idx;     // 0 = 起始位, 1..8 = 数据位, 9 = 停止位
@@ -46,7 +49,7 @@ module uart_tx #(
                 txd     <= 1'b0;          // 起始位
             end
         end else begin
-            if (clk_cnt == CLKS_PER_BIT[CW-1:0] - 1'b1) begin
+            if (clk_cnt == CNT_MAX) begin
                 clk_cnt <= {CW{1'b0}};
                 if (bit_idx == 4'd9) begin
                     busy <= 1'b0;         // 停止位发送完毕

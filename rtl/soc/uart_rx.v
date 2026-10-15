@@ -27,6 +27,11 @@ module uart_rx #(
                      S_DATA  = 2'd2,
                      S_STOP  = 2'd3;
 
+    /* verilator lint_off WIDTHTRUNC */
+    localparam [CW-1:0] CNT_MID = (CLKS_PER_BIT / 2);
+    localparam [CW-1:0] CNT_MAX = (CLKS_PER_BIT - 1);
+    /* verilator lint_on  WIDTHTRUNC */
+
     reg       rxd_s1, rxd_s2;   // 同步器
     reg [1:0] state;
     reg [CW-1:0] clk_cnt;
@@ -59,7 +64,7 @@ module uart_rx #(
                     if (!rxd_s2) state <= S_START;
                 end
                 S_START: begin
-                    if (clk_cnt == CLKS_PER_BIT[CW-1:0] / 2) begin
+                    if (clk_cnt == CNT_MID) begin
                         clk_cnt <= {CW{1'b0}};
                         if (!rxd_s2) begin
                             state   <= S_DATA;
@@ -72,7 +77,7 @@ module uart_rx #(
                     end
                 end
                 S_DATA: begin
-                    if (clk_cnt == CLKS_PER_BIT[CW-1:0] - 1'b1) begin
+                    if (clk_cnt == CNT_MAX) begin
                         clk_cnt <= {CW{1'b0}};
                         shreg   <= {rxd_s2, shreg[7:1]};
                         if (bit_idx == 3'd7) state <= S_STOP;
@@ -82,7 +87,7 @@ module uart_rx #(
                     end
                 end
                 S_STOP: begin
-                    if (clk_cnt == CLKS_PER_BIT[CW-1:0] - 1'b1) begin
+                    if (clk_cnt == CNT_MAX) begin
                         clk_cnt <= {CW{1'b0}};
                         state   <= S_IDLE;
                         if (rxd_s2) begin

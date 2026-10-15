@@ -127,3 +127,63 @@
 ### 交付物
 
 - `docs/spec/soc.md`：完整 SoC 规格说明书（9 章，含 Wishbone 协议要点、存储器映射、6 个 RTL 模块接口定义、寄存器映射、验证计划与扩展路径）。
+
+---
+
+## 2026-10-15 SoC 总线与外设 RTL 实现与系统级集成 (阶段 S1b)
+
+### 阶段目标与交付物
+
+依据 `docs/spec/soc.md` 规格，完成 Wishbone B4 总线、片上外设及 SoC 顶层完整 RTL 与验证：
+- **RTL 交付**：
+  - `rtl/soc/wb_core_bridge.v`：CPU 核 Native dmem 端口到 Wishbone B4 Master 桥接器；
+  - `rtl/soc/wb_interconnect.v`：基于地址解码的 1-Master 4-Slave 互联交叉矩阵；
+  - `rtl/soc/wb_sram.v`：64KB 双端口可综合/可推断 BRAM 存储器（Port A 取指直连，Port B 挂载 Wishbone）；
+  - `rtl/soc/wb_uart.v`：SiFive FE310 寄存器布局的 UART 控制器（内含 8 字节收发双 FIFO，驱动 `uart_tx`/`uart_rx` PHY）；
+  - `rtl/soc/wb_clint.v`：标准 64 位单调递增时钟 `mtime`/`mtimecmp` 与定时器中断发生器；
+  - `rtl/soc/soc_top.v`：SoC 顶层集成模块。
+- **验证交付**：
+  - 单元测试：`tb_wb_interconnect.v`、`tb_wb_uart.v`、`tb_wb_clint.v`（9 项单元测试全部通过）；
+  - 系统集成测试：`sim/soc/test_soc.S` + `sim/soc/tb_soc.v`（验证汇编指令经由 Wishbone 访问 SRAM、向 UART 打印 "Hi!\n" 并在 TB 端接收校验字符流、轮询 CLINT 递增计数）；
+  - 回归测试：`make lint`（0 警告）、`make unit-test`、`make test-core`、`make test-soc`、`make isa-test`（38/38）、`make difftest`（38/38 Spike DiffTest 100% 匹配）。
+
+---
+
+### BUG-004: UART 波特率计数器截断导致除二采样失真
+
+- **模块**：`rtl/soc/uart_rx.v`, `rtl/soc/uart_tx.v`
+- **现象**：在单元测试中设置较小波特率参数 `CLKS_PER_BIT=16` 时，UART 接收器在检测到起始位（Start bit）进入 `RX_STATE_START` 后，计数器立即触发，误报 Glitch 退出，无法接收到正确数据。
+- **定位过程**：
+  - 查看波形，发现采样计数器在进入 `RX_STATE_START` 后仅经过 0 个周期就判定超时并触发 glitch 退出；
+  - 检查代码发现：`localparam [CW-1:0] CNT_MID = CLKS_PER_BIT[CW-1:0] / 2;`；
+  - 当 `CLKS_PER_BIT = 16`，其二进制为 `5'b10000`。而位宽计算为 `CW = $clog2(16) = 4`；
+  - 对 16 进行 `[3:0]` 截断，结果恰好为 `4'b0000 = 0`，导致 `CNT_MID = 0 / 2 = 0`！计数器立即满足条件并清零。
+- **根因**：参数截断表达式在整型运算前执行了按位截断，当 `CLKS_PER_BIT` 恰为 2 的整数幂时，低 `CW` 位全为 0。
+- **修复**：先在整型语义下除以 2，再赋值给带位宽的 localparam：
+  ```verilog
+  localparam [CW-1:0] CNT_MID = (CLKS_PER_BIT / 2);
+  localparam [CW-1:0] CNT_MAX = (CLKS_PER_BIT - 1);
+  ```
+  配合 Verilator 豁免注释 `/* verilator lint_off WIDTHTRUNC */`。
+- **教训**：Verilog 参数与常量计算中，必须警惕位宽截断先于除法/乘法运算生效的陷阱。对于位宽定义，`$clog2(MAX + 1)` 才能容纳最大值，或者在纯整型算术之后再进行位宽规整。
+
+---
+
+### BUG-005: UART 控制器连续 Store 写入丢包与 FIFO 读指针时序竞争
+
+- **模块**：`rtl/soc/wb_uart.v`
+- **现象**：CPU 执行连续两个 `sw` 写入 UART `txdata` 寄存器（如打印 "Hi"）时，第二个字符丢失，并且 TX PHY 发送出来的第一个字符是未初始化的 `0xXX` 垃圾数据。
+- **定位过程**：
+  1. 打印丢失：观察 CPU 访存请求与总线 ACK。CPU 流水线发出的 `dmem_we` 紧密相连（单拍脉冲）。由于之前为了防止重复写入，在 `tx_push` 上增加了 `~wbs_ack_o` 门控：
+     ```verilog
+     tx_push <= wbs_cyc_i & wbs_stb_i & wbs_we_i & ~wbs_ack_o & ...;
+     ```
+     在上一拍刚产生 `wbs_ack_o = 1` 时，第二拍新的 `sw` 请求刚好到达，此时 `~wbs_ack_o` 恰为 0，导致第二拍写操作被误屏蔽。
+  2. 垃圾字符：观察 FIFO 弹出逻辑，原实现中 `tx_phy_data = tx_mem[tx_rptr]` 为组合逻辑输出，当发现 PHY 空闲时，触发 `tx_pop <= 1`；在下一个时钟上升沿，`tx_rptr <= tx_rptr + 1`，同时 `tx_phy_valid <= 1`。但此时组合逻辑的 `tx_mem[tx_rptr]` 已经由于 `tx_rptr` 加 1 而指向了下一个尚未写入的空单元！PHY 发送出去的是后一个无效字节。
+- **根因**：
+  1. Wishbone Classic 单拍总线在面对背靠背的连续单周期传输时，不能简单将前一拍的 ACK 状态作为当前拍写的互斥条件，必须严格按照当前周期的 `cyc & stb & we` 生成操作；
+  2. 同步 FIFO 的读数据输出若依赖组合寻址，在出队脉冲使读指针加 1 的瞬间，数据线会立刻跳变到下一个条目。PHY 在握手确认时采样到的数据已不是弹出条目。
+- **修复**：
+  1. 去除 `~wbs_ack_o` 对写使能的误门控，`wbs_ack_o <= wbs_cyc_i & wbs_stb_i`；
+  2. 在 `tx_pop` 触发时，同步将当前 `tx_mem[tx_rptr]` 打拍锁存入 `tx_phy_data`，并用 `~tx_phy_valid` 锁住下一拍的重复 pop，彻底消除了指针前移造成的数据撕裂。
+- **教训**：在软硬件协同总线接口中，背靠背（Back-to-Back）传输和单周期脉冲是非常关键的边界场景。FIFO 的读出数据有效性与读指针推进必须在时序上严格对齐（对同步 FIFO，最稳妥的做法是在 pop 发生时锁存读出数据，或使用 Skid Buffer / FWFT 机制）。
