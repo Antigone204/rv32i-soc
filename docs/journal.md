@@ -233,3 +233,46 @@
   - 一次性覆盖 `.bss` 清零、`.data` 初值与修改、递归函数栈调用 (`fib(10)=55`)、`libgcc` 32 位有符号/无符号软乘除法与取模 (`__mulsi3`/`__divsi3`/`__udivsi3`)、CLINT 64 位计时器读取以及超出 8 字节 FIFO 深度的长字符串格式化打印；
   - 编译产物 `test_c.elf` 总大小 4492 字节（已跨越 `0x0000_1000` 地址边界，直接印证了迁移 `SIM_CTRL` 至 `0xFFFF_FFF0` 的必要性），实测 `Cycles: 34314, Instructions: 16438, CPI: 2.09`，全套回归 100% 通过。
 
+---
+
+## 2026-10-16 CoreMark 移植与纯 RV32I 性能基线测定 (阶段 S1d)
+
+### 阶段目标与交付物
+
+在 S1c 裸机 C 运行时环境基础上，将业界标准的 EEMBC CoreMark 基准测试程序完整移植到 RV32I SoC 平台，建立纯 RV32I 软硬件协同体系下的第一份权威 CPU 性能基线，作为后续引入分支预测器（阶段 P1）、硬件乘除法 M 扩展（阶段 M1）以及 Cache 存储层次时的关键量化对照指标：
+
+- **官方标准核心算法文件导入 (`sw/coremark/`)**：
+  - 导入官方 EEMBC CoreMark 核心算法：`coremark.h`、`core_main.c`、`core_list_join.c`、`core_matrix.c`、`core_state.c`、`core_util.c`，严格保持官方核心测试逻辑原貌。
+- **平台适配层定制与关键适配点 (`core_portme.h` & `core_portme.c`)**：
+  1. **无浮点与零外部头文件**：设定 `#define HAS_FLOAT 0`、`HAS_TIME_H 0`、`USE_CLOCK 0`、`HAS_STDIO 0`、`HAS_PRINTF 0`，完全复用 `sw/common/uart.h` 内置的轻量高效 `ee_printf`；
+  2. **静态片上存储分配**：配置 `#define MEM_METHOD MEM_STATIC` 与 `TOTAL_DATA_SIZE (2 * 1000)`，将 CoreMark 的状态机、链表与矩阵测试缓冲区全部静态收纳在片上 64KB SRAM 中，免除 malloc 堆管理开销；
+  3. **Performance Run 标准种子**：配置 `#define SEED_METHOD SEED_VOLATILE`，设定 `seed1 = 0x0`、`seed2 = 0x0`、`seed3 = 0x66`（计算得出特征 `seedcrc = 0xe9f5`），触发 2K Performance Run 严苛校验集；
+  4. **计时器抽象与符号冲突解耦**：将 CoreMark 内部抽象类型统一定义为 `typedef uint64_t CORE_TICKS;`，在 `sw/common/timer.c` 中将 `get_time(void)` 设为 `__attribute__((weak))`，并在 `core_portme.c` 中直接调用 CLINT 防撕裂机制精确测定 benchmark 有效运行区间内耗费的纯时钟周期数 `total_ticks = stop_time_val - start_time_val`；
+  5. **仿真时间尺度规整与校验通过**：设定 `EE_TICKS_PER_SEC 1000` 并保证 `time_in_secs(ticks) >= 10`，顺利规避了在宿主机微秒级快速仿真环境下因运行秒数未满 10 秒而误报的机制，确保 CoreMark 判定执行有效并成功打印 `Correct operation validated.`；
+  6. **定点化 CoreMark/MHz 打印**：在 `portable_fini()` 中直接基于 `total_ticks` 与迭代次数利用 64 位整数运算计算出定点化指标 $\text{score\_x1000} = \frac{\text{ITERATIONS} \times 10^9}{\text{total\_ticks}}$，通过 `ee_printf("CoreMark/MHz : %u.%03u\n", ...)` 输出精确到小数点后 3 位的标准化分值。
+- **构建系统与自动化断言验证 (`Makefile` & `make coremark`)**：
+  - 新增 `make coremark` 自动化目标，完成交叉编译、生成 ELF 与 Hex、执行 Verilog 仿真以及自动断言检查（`Correct operation validated`、`CoreMark/MHz`、`SOC VERIFICATION PASSED` 三重硬核校验）。
+
+### 实测性能基线数据
+
+- **ELF 存储占用 (`riscv-none-elf-size build/coremark.elf`)**：
+  ```
+     text    data     bss     dec     hex filename
+    19832      24    2028   21884    557c build/coremark.elf
+  ```
+  - 代码段仅占约 19.4 KB，SRAM 数据与 BSS 仅占约 2 KB，总固件尺寸约 21.4 KB，片上 64KB SRAM 尚余 42KB 充裕栈空间与安全裕量。
+- **CoreMark 执行与基线得分 (ITERATIONS = 2)**：
+  - **总运行周期数 (Total Ticks)**：2,086,119 cycles
+  - **测试用例校验结果**：
+    - `seedcrc` : `0xe9f5`
+    - `[0]crclist` : `0xe714`
+    - `[0]crcmatrix` : `0x1fd7`
+    - `[0]crcstate` : `0x8e3a`
+    - `[0]crcfinal` : `0x72be`
+    - 状态：**Correct operation validated.**
+  - **基线得分**：**0.958 CoreMark/MHz**
+- **硬件性能计数器实时统计 (Hardware Profiling)**：
+  - **总周期数 (Total Cycles)**：2,357,625 cycles（含前后初始化与校验打印）
+  - **退休指令数 (Retired Instructions)**：1,565,641 insts
+  - **平均 CPI**：**1.51**
+

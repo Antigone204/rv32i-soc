@@ -1,7 +1,7 @@
 #include "soc.h"
 #include "timer.h"
 
-uint64_t get_time(void) {
+__attribute__((weak)) uint64_t get_time(void) {
     uint32_t hi, lo, hi2;
     do {
         hi  = CLINT_MTIME_HI_REG;

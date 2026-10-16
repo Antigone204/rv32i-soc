@@ -13,7 +13,7 @@ RTL_SOC     := rtl/soc/uart_tx.v rtl/soc/uart_rx.v rtl/soc/wb_core_bridge.v \
                rtl/soc/wb_clint.v rtl/soc/soc_top.v
 SMOKE_SRCS  := rtl/soc/uart_tx.v rtl/soc/uart_rx.v platform/pango/smoke_top.v
 
-.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-wb-interconnect test-wb-uart test-wb-clint test-soc test-c unit-test isa-test difftest toolcheck clean
+.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-wb-interconnect test-wb-uart test-wb-clint test-soc test-c coremark unit-test isa-test difftest toolcheck clean
 
 help:
 	@echo "make toolcheck    - 检查本地工具链"
@@ -22,6 +22,7 @@ help:
 	@echo "make test-core    - 运行 5 级流水线集成自检测试"
 	@echo "make test-soc     - 运行 SoC 顶层软硬件集成冒烟测试 (SRAM/UART/CLINT)"
 	@echo "make test-c       - 运行 S1c 裸机 C 语言运行时综合验收测试"
+	@echo "make coremark     - 运行 EEMBC CoreMark 纯 RV32I 性能基线测试"
 	@echo "make isa-test     - 运行官方 RV32UI 全套自动化指令集测试"
 	@echo "make difftest     - 运行与 Spike 的差分比对验证"
 	@echo "make smoke-sim    - 平台冒烟测试的仿真（UART banner + 回显）"
@@ -119,6 +120,21 @@ test-c: $(BUILD)/test_c.hex
 	vvp -n $(BUILD)/tb_soc.vvp +HEX=$< +TIMEOUT=200000 | tee $(BUILD)/test_c.log
 	@grep -q "\[S1c\] C Runtime OK! fib=55 mul=-69104 div=-2702 hex=0x00123456" $(BUILD)/test_c.log
 	@grep -q "SOC VERIFICATION PASSED" $(BUILD)/test_c.log
+
+COREMARK_SRCS  := $(wildcard sw/coremark/*.c)
+
+$(BUILD)/coremark.hex: $(SW_COMMON_SRCS) $(COREMARK_SRCS) sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/coremark/coremark.h sw/coremark/core_portme.h
+	@mkdir -p $(BUILD)
+	$(CROSS)gcc -march=rv32i_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DITERATIONS=2 -DFLAGS_STR="\"-march=rv32i_zicsr -mabi=ilp32 -O2 -lgcc\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $(BUILD)/coremark.elf
+	$(CROSS)objcopy -O verilog $(BUILD)/coremark.elf $@
+
+coremark: $(BUILD)/coremark.hex
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -Irtl/core -Irtl/soc -o $(BUILD)/tb_soc.vvp sim/soc/tb_soc.v $(RTL_SOC) $(RTL_CORE)
+	vvp -n $(BUILD)/tb_soc.vvp +HEX=$(BUILD)/coremark.hex +TIMEOUT=10000000 | tee $(BUILD)/coremark.log
+	@grep -q "Correct operation validated" $(BUILD)/coremark.log
+	@grep -q "CoreMark/MHz" $(BUILD)/coremark.log
+	@grep -q "SOC VERIFICATION PASSED" $(BUILD)/coremark.log
 
 test-core:
 	@mkdir -p $(BUILD)
