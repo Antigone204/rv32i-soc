@@ -214,3 +214,22 @@
      修复后实测输出精确反映程序真实性能：`Cycles: 233, Instructions: 128, CPI: 1.82`；
   2. **高地址仿真信箱与后向兼容**：扩展 Mailbox 触发条件支持高位未映射地址 `0xFFFF_FFF0`（`SIM_CTRL`），同时保持兼容旧地址 `0x0000_1000`；在硬件上依赖 `wb_interconnect` 对未映射地址返回虚拟单拍 `ACK=1, DAT=0`，避免对 64KB SRAM 内部物理空间的污染。
 - **教训**：芯片验证中的性能剖析（Profiling）必须将被测核心的有效运行区间与仿真环境自身的清理/排空操作在时序上完全解耦；仿真控制信箱宜选择远离任何合法存储器与外设的保留高地址。
+
+---
+
+## 2026-10-16 裸机 C 语言运行时环境搭建与验收 (阶段 S1c)
+
+### 阶段目标与交付物
+
+为 RV32I SoC 建立完整、零外部 OS 依赖的 Freestanding 裸机 C 语言运行环境，打通 C 程序编译、软乘除法库（`libgcc`）链接、外设驱动与系统级仿真验证全链路，为 S1d（CoreMark 移植）提供基础设施：
+- **软件运行时基础设施 (`sw/common/`)**：
+  - `link.ld`：面向 64KB 片上 SRAM（`0x0000_0000 ~ 0x0000_FFFF`）的裸机链接脚本，规范排布 `.text.init`、`.text`、`.rodata`、`.data`、`.sdata`、`.bss`，导出 `__global_pointer$`、`__bss_start`、`__bss_end` 与 16 字节对齐栈顶 `__stack_top = 0x0001_0000`；
+  - `crt0.S`：启动汇编，完成 `x1`~`x31` 通用寄存器清零、`gp`/`sp` 初始化、`.bss` 段按字清零、`main()` 调用以及向高地址信箱 `SIM_CTRL (0xFFFF_FFF0)` 上报退出状态（`main == 0` 写 `1`，`main != 0` 附带 `0xDEAD0000` 前缀防冲突）；
+  - `soc.h`：统一封装 SRAM、UART0 (`0x1001_0000`)、CLINT (`0x0200_0000`) 与 `SIM_CTRL` (`0xFFFF_FFF0`) 寄存器访问宏；
+  - `uart.h` / `uart.c`：基于 `TXDATA.full`（`bit[31]`）硬件流控轮询的串口驱动，以及内置轻量级 `printf` / `ee_printf`（支持 `%c`, `%s`, `%d`, `%i`, `%u`, `%x`, `%X`, `%p` 与宽度/前导零填充）；
+  - `timer.h` / `timer.c`：实现 RISC-V 标准 `hi -> lo -> hi2` 防进位撕裂的 64 位原子读取 `get_time()` 及 `delay_cycles()`；
+  - `str.h` / `str.c`：提供 `memcpy`、`memset`、`memmove`、`memcmp`、`strlen`、`strcmp`、`strncmp`、`strcpy` 基础库函数。
+- **综合验收测试 (`sw/test_c/main.c` & `make test-c`)**：
+  - 一次性覆盖 `.bss` 清零、`.data` 初值与修改、递归函数栈调用 (`fib(10)=55`)、`libgcc` 32 位有符号/无符号软乘除法与取模 (`__mulsi3`/`__divsi3`/`__udivsi3`)、CLINT 64 位计时器读取以及超出 8 字节 FIFO 深度的长字符串格式化打印；
+  - 编译产物 `test_c.elf` 总大小 4492 字节（已跨越 `0x0000_1000` 地址边界，直接印证了迁移 `SIM_CTRL` 至 `0xFFFF_FFF0` 的必要性），实测 `Cycles: 34314, Instructions: 16438, CPI: 2.09`，全套回归 100% 通过。
+

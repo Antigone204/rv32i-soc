@@ -123,19 +123,24 @@ module tb_soc;
             // 检查 CPU 对 0x0000_1000 或 0xFFFF_FFF0 的写操作
             if (u_soc.u_core.dmem_req && (|u_soc.u_core.dmem_byte_we) &&
                 ((u_soc.u_core.dmem_addr == 32'h0000_1000) || (u_soc.u_core.dmem_addr == 32'hFFFF_FFF0))) begin
-                $display("\n[MAILBOX] CPU wrote 0x%08x to 0x%08x", u_soc.u_core.dmem_wdata, u_soc.u_core.dmem_addr);
                 if (u_soc.u_core.dmem_wdata == 32'h0000_0001) begin
                     final_cycles  = perf_cycle;
                     final_instret = perf_instret;
-                    // 等待物理串口将 TX FIFO 中的字符全部序列化发送完毕
-                    repeat (2500) @(posedge clk);
-                    $display("\n==============================================");
+                    // 等待物理串口将 TX FIFO 与发送移位寄存器中的字符全部序列化发送完毕
+                    repeat (2) @(posedge clk);
+                    while (!u_soc.u_uart.tx_fifo_empty || !u_soc.u_uart.u_tx.tx_ready) begin
+                        @(posedge clk);
+                    end
+                    repeat (CPB * 2) @(posedge clk);
+                    $display("\n[MAILBOX] CPU wrote 0x00000001 (PASS)");
+                    $display("==============================================");
                     $display("SOC VERIFICATION PASSED");
                     $display("Cycles: %0d, Instructions: %0d, CPI: %0.2f",
                              final_cycles, final_instret, $itor(final_cycles) / $itor(final_instret));
                     $display("==============================================");
                     $finish;
                 end else begin
+                    $display("\n[MAILBOX] CPU wrote 0x%08x to 0x%08x", u_soc.u_core.dmem_wdata, u_soc.u_core.dmem_addr);
                     $display("\n[FAIL] SoC test reported failure code: 0x%08x", u_soc.u_core.dmem_wdata);
                     $finish;
                 end
