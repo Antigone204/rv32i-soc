@@ -554,17 +554,18 @@ soc_top
 
 ---
 
-## 7. 验证计划
+## 7. 验证计划与当前状态
 
-| 测试层级 | 测试目标 | 方法 | 完成标准 |
-|:---------|:---------|:-----|:---------|
-| Lint | SoC 顶层零警告 | `verilator --lint-only -Wall --top soc_top` | 0 Error, 0 Warning |
-| 单元测试 | 各 Wishbone Slave 寄存器读写 | 独立 testbench 发 WB 事务 | 读写值匹配、ACK 时序正确 |
-| ISA 回归 | 38 项 ISA 测试在 SoC 上仍然通过 | 将 `tb_isa` 改接 `soc_top` | 38/38 PASS |
-| DiffTest 回归 | Spike 差分在 SoC 上仍然通过 | 同上 | 38/38 MATCH |
-| UART 输出 | `putchar('H')` 正确发出串口波形 | SoC 级 testbench + 虚拟串口监测 | 接收到正确字符 |
-| Timer 读取 | `mtime` 单调递增且可被软件正确读取 | 裸机 C 程序读 Timer 两次并求差 | 差值 > 0 且与周期数一致 |
-| CoreMark | CoreMark 在仿真中完整执行并输出分数 | 完整移植 + 仿真运行 | 产出 CoreMark/MHz 数字 |
+| 测试层级 | 测试目标 | 方法 / 命令 | 完成标准 | 当前状态 / 实测结果 |
+|:---------|:---------|:------------|:---------|:---------------------|
+| **Lint 静态检查** | 顶层与各子模块零警告 | `make lint` | 0 Error, 0 Warning | ✅ **PASS** (Verilator `-Wall` 0 警告) |
+| **单元测试** | 算术、译码、总线与外设寄存器读写 | `make unit-test` | 9/9 单元模块全通过 | ✅ **9/9 PASS** (含 ALU/RegFile/ImmGen/Decoder/Forwarding/Hazard/Interconnect/UART/CLINT) |
+| **流水线核心自检** | 5 级流水线基础功能与冒险定向测试 | `make test-core` | 3/3 核心测试全部通过 | ✅ **3/3 PASS** (基础流水线 + SW-LW 结构冒险 + BUG-003 EX 停顿前推锁存) |
+| **SoC 软硬件集成** | 总线读写 SRAM、UART 字符打印与 CLINT 计数 | `make test-soc` | 打印 "Hi!"，Mailbox PASS，时序正常 | ✅ **PASS** (Cycles: 233, Instructions: 128, CPI: 1.82) |
+| **C 语言运行时环境** | 栈初始化、软乘除法 (`libgcc`)、外设驱动与 printf | `make test-c` | 打印校验信息，Mailbox PASS | ✅ **PASS** (Cycles: 34314, Instructions: 16438, CPI: 2.09) |
+| **ISA 官方测试回归** | 38 项官方 RV32UI 测试在核与总线上 100% 通过 | `make isa-test` | 38/38 全部 PASS | ✅ **38/38 PASS** (加权平均 CPI = 1.116, 耗时 2.8s) |
+| **Spike DiffTest 差分** | 与 Spike Golden Model 逐指令提交对比 | `make difftest` | 38/38 全部 MATCH (0 Mismatch) | ✅ **38/38 MATCH** (提交级 PC/目标寄存器/写值 100% 吻合) |
+| **CoreMark 性能基线** | EEMBC CoreMark 2K 性能基准测试与校验 | `make coremark` | 运行校验通过并产出有效分值 | ✅ **PASS** (`0.958 CoreMark/MHz`, Validate PASS, CPI: 1.51) |
 
 ---
 
