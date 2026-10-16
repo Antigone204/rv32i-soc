@@ -58,9 +58,10 @@ module wb_interconnect (
     // =========================================================================
     // 地址译码（组合逻辑，当拍有效）
     // =========================================================================
-    wire sel_sram  = (wbm_adr_i[31:16] == 16'h0000);
-    wire sel_uart  = (wbm_adr_i[31:16] == 16'h1001);
-    wire sel_clint = (wbm_adr_i[31:16] == 16'h0200);
+    wire sel_sram     = (wbm_adr_i[31:16] == 16'h0000);
+    wire sel_uart     = (wbm_adr_i[31:16] == 16'h1001);
+    wire sel_clint    = (wbm_adr_i[31:16] == 16'h0200);
+    wire sel_unmapped = ~(sel_sram | sel_uart | sel_clint);
 
     // =========================================================================
     // 请求路由：stb/cyc 按组合译码门控到选中的从设备
@@ -93,15 +94,21 @@ module wb_interconnect (
     //       下一拍可能已切换到新地址），但从设备的 ack 和 dat 在请求后 1 拍
     //       才有效。因此必须用寄存的译码结果来路由返回路径。
     // =========================================================================
-    reg [1:0] sel_r;   // 0=SRAM, 1=UART, 2=CLINT, 3=unmapped
+    reg [1:0] sel_r;              // 0=SRAM, 1=UART, 2=CLINT, 3=unmapped
+    reg       unmapped_pending_r; // 记录上一拍是否存在有效的未映射请求
+
     always @(posedge clk) begin
         if (!rst_n) begin
-            sel_r <= 2'd3;
-        end else if (wbm_stb_i) begin
-            if (sel_sram)       sel_r <= 2'd0;
-            else if (sel_uart)  sel_r <= 2'd1;
-            else if (sel_clint) sel_r <= 2'd2;
-            else                sel_r <= 2'd3;
+            sel_r              <= 2'd3;
+            unmapped_pending_r <= 1'b0;
+        end else begin
+            unmapped_pending_r <= wbm_cyc_i & wbm_stb_i & sel_unmapped;
+            if (wbm_stb_i) begin
+                if (sel_sram)       sel_r <= 2'd0;
+                else if (sel_uart)  sel_r <= 2'd1;
+                else if (sel_clint) sel_r <= 2'd2;
+                else                sel_r <= 2'd3;
+            end
         end
     end
 
@@ -122,7 +129,7 @@ module wb_interconnect (
             end
             default: begin
                 wbm_dat_o = 32'h0000_0000;
-                wbm_ack_o = 1'b0;
+                wbm_ack_o = unmapped_pending_r;
             end
         endcase
     end

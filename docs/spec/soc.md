@@ -11,13 +11,15 @@
 将已验证的 RV32I 流水线核 (`core.v`) 集成为一个可运行裸机 C 程序（CoreMark）的最小 SoC。
 
 **S1 阶段目标**：
-- 定义并实现 **Wishbone B4 Classic Cycle** 数据总线；
+- 定义并实现 **Wishbone B4 风格的固定一拍同步子集** 数据总线；
 - 通过地址译码将 CPU 数据端口扇出到多个外设从设备；
 - 提供足够的 SRAM、UART 输出与硬件计时器，支撑 CoreMark 移植；
 - 为后续 CSR/中断 (S2)、Cache/DDR3 (S3) 预留扩展接口。
 
 **设计约束**：
-- 所有从设备响应延迟为 **1 个时钟周期**（与 BRAM 同步读一致），S1 阶段不引入流水线停顿扩展；
+- 所有从设备响应延迟为 **固定 1 个时钟周期**（与 BRAM 同步读一致），S1 阶段不引入流水线停顿扩展；
+- CPU 核心每个访存请求在总线上仅维持 1 拍脉冲；
+- S1 阶段不支持从设备插入等待周期（Wait States）；
 - 纯 RTL，不使用厂商原语（`rtl/soc/` 目录）；
 - 指令总线 **不经过 Wishbone**，直连 SRAM Port A（零等待状态取指）。
 
@@ -60,29 +62,29 @@
 
 ---
 
-## 3. Wishbone B4 总线协议要点
+## 3. 总线协议规范 (S1b 固定一拍同步子集)
 
-> 本节摘取 [Wishbone B4 Specification](https://cdn.opencores.org/downloads/wbspec_b4.pdf) 的核心要义，供系统学习参考。
+> **定位说明**：S1b 实现的是 **Wishbone B4 信号风格的固定 1 拍同步子集总线 (Fixed 1-Cycle Synchronous Subset)**。为了保持 5 级流水线零等待特性，S1b 假定所有从设备固定在请求后下一拍响应，不支持从设备插入可变等待状态（Wait States）。
 
 ### 3.1 信号定义
 
-Wishbone 采用 **主-从 (Master-Slave)** 模型。信号以 `_o`（输出）和 `_i`（输入）为后缀，方向相对于信号所在模块。
+总线信号命名与方向沿用 Wishbone B4 规约：
 
 | 信号 | 宽度 | 方向 (Master) | 描述 |
 |:-----|:-----|:-------------|:-----|
-| `cyc_o` | 1 | → Slave | **总线周期有效**。持续为高表示一个完整的总线事务正在进行 |
-| `stb_o` | 1 | → Slave | **选通/请求**。表示当前地址和控制信号有效，请求一次传输 |
+| `cyc_o` | 1 | → Slave | **总线周期有效**。S1b 中与 `stb_o` 同步 |
+| `stb_o` | 1 | → Slave | **选通/请求脉冲**。CPU 发起访存时维持 1 拍高电平 |
 | `we_o`  | 1 | → Slave | **写使能**。1 = 写操作，0 = 读操作 |
 | `adr_o` | 32 | → Slave | **字节地址** |
 | `dat_o` | 32 | → Slave | **写数据**（Master → Slave） |
 | `sel_o` | 4 | → Slave | **字节选择**。每一位对应数据总线的一个字节通道，1 = 该字节参与传输 |
-| `dat_i` | 32 | ← Slave | **读数据**（Slave → Master） |
-| `ack_i` | 1 | ← Slave | **应答**。Slave 在完成传输后拉高 1 拍，通知 Master 数据已就绪（读）或写入已完成（写） |
-| `err_i` | 1 | ← Slave | **错误**。访问了无效地址或非法操作（S1 阶段未使用，由互连默认处理） |
+| `dat_i` | 32 | ← Slave | **读数据**（Slave → Master，请求后第 1 拍有效） |
+| `ack_i` | 1 | ← Slave | **应答**。Slave 在请求后第 1 拍拉高，通知传输完成 |
+| `err_i` | 1 | ← Slave | **错误**。S1 阶段未实现，未映射地址由互连返回虚拟 ACK=1, DAT=0 |
 
-### 3.2 Classic Single Cycle 时序
+### 3.2 传输时序与背靠背特性
 
-**单次读操作** (1 Wait State，匹配 BRAM 时序)：
+**单次读操作** (固定 1 拍响应)：
 
 ```
 Clock :  __|‾‾|__|‾‾|__|‾‾|__|‾‾|
@@ -94,16 +96,16 @@ we_o  :  ____________________________   (= 0, 读操作)
 adr_o :  ----< ADDR >-----------
 sel_o :  ----< 1111 >-----------
 dat_i :  ____________< DATA >-------
-ack_i :  ________/‾‾‾‾\_____________
+ack_i :  ____________/‾‾‾‾‾‾‾‾‾\____
 
-         T1: Master 发出地址      T2: Slave 返回数据 + ACK
+         T1: Master 发出单拍请求   T2: Slave 返回数据 + ACK (1 拍后)
 ```
 
-- T1 上升沿：Master 断言 `cyc`、`stb`、`adr`、`sel`。Slave 收到地址，启动 BRAM 读取。
-- T2 上升沿：Slave 将 BRAM 读出数据放上 `dat_o`（Slave 端），同时断言 `ack`。Master 采样数据。
-- T2 之后：Master 撤销 `cyc`/`stb`，总线空闲。
+- T1 周期：Master 发出 `cyc`、`stb`、`adr`、`sel` 脉冲（维持 1 拍）。
+- T2 周期：Slave 将读出数据放上 `dat_o`，同时断言 `ack_o`（维持 1 拍）。
+- T2 之后：总线恢复空闲。
 
-**单次写操作** (1 Wait State)：
+**单次写操作** (固定 1 拍响应)：
 
 ```
 Clock :  __|‾‾|__|‾‾|__|‾‾|__|‾‾|
@@ -115,17 +117,25 @@ we_o  :  ____/‾‾‾‾‾‾‾‾‾\________   (= 1, 写操作)
 adr_o :  ----< ADDR >-----------
 sel_o :  ----< SEL  >-----------     (字节使能，如 4'b0001 = SB)
 dat_o :  ----< DATA >-----------
-ack_i :  ________/‾‾‾‾\_____________
+ack_i :  ____________/‾‾‾‾‾‾‾‾‾\____
 
-         T1: Master 发出地址+数据   T2: Slave 确认写入完成
+         T1: Master 发出单拍写    T2: Slave 确认写入完成 (ACK 维持 1 拍)
 ```
 
-### 3.3 握手规则
+**连续背靠背传输 (Back-to-Back Transactions)**：
 
-1. Master **必须先断言 `cyc`**，然后才能断言 `stb`（本设计中 `cyc` 和 `stb` 同时断言）；
-2. Master 在看到 `ack` 之前 **不得撤销 `stb`**（保持请求直到被应答）；
-3. Slave 在看到 `cyc & stb` 之前 **不得断言 `ack`**；
-4. `ack` 必须是 **单周期脉冲**——应答后立即撤销，避免 Master 误认为是连续两次传输。
+由于 CPU 流水线可连续发出访存（例如连续写 UART 或连续读内存），当两笔请求紧密相连时：
+- Master 在 T1 周期发出 REQ0，在 T2 周期无缝发出 REQ1（`stb` 连续为高 2 拍）；
+- Slave 在 T2 周期响应 REQ0 的 ACK，在 T3 周期响应 REQ1 的 ACK；
+- **ACK 表现为连续多个周期为高**，这在固定一拍总线子集中属于正常合规行为。
+
+### 3.3 握手与实现规则 (S1b)
+
+1. **单拍脉冲发起**：Master 每个访存事务只断言 `cyc & stb` 恰好 1 个时钟周期；
+2. **固定时延响应**：所有合法 Slave 在采样到 `cyc & stb` 后的下一拍输出 `ack_o <= cyc & stb` 并完成内部状态更新（写入或读出）；
+3. **不支持等待状态**：S1b 不支持 Slave 插入等待周期（Wait States），Slave 必须保证 1 拍就绪；
+4. **背靠背支持**：Slave 不得在 ACK 逻辑中加入盲目的 `~ack` 门控（如 `ack <= cyc & stb & ~ack`），否则会导致背靠背连续请求的第二笔事务 ACK 丢失并吞噬写操作；
+5. **未映射访问处理**：访问未映射地址时，互连模块在下一拍返回虚拟的 `ack = 1` 与 `dat = 32'h0000_0000`，确保端到端时序整齐且不挂起总线。
 
 ---
 
@@ -139,6 +149,7 @@ ack_i :  ________/‾‾‾‾\_____________
 | `0x0200_0000` | `0x0200_FFFF` | 64 KB 区域 | **CLINT** | `mtime` / `mtimecmp`（RISC-V 标准地址） |
 | `0x1001_0000` | `0x1001_001F` | 32 B | **UART0** | TX/RX 数据与控制寄存器 |
 | `0x8000_0000` | `0xBFFF_FFFF` | 1 GB | **DDR3**（未来） | 外部 DDR3 存储器，S3 阶段接入 |
+| `0xFFFF_FFF0` | `0xFFFF_FFFF` | 16 B | **SIM_CTRL (仿真专用)** | 仿真退出信箱（硬件未映射，互连返回虚拟 ACK=1，DAT=0） |
 
 ### 4.1 地址译码规则
 
@@ -151,9 +162,16 @@ wire sel_uart  = (adr[31:16] == 16'h1001);   // 0x1001_xxxx
 wire sel_none  = ~(sel_sram | sel_clint | sel_uart);  // 未映射区域
 ```
 
-**未映射地址处理**：互连模块对未映射地址返回 `ack = 1`，`dat = 32'h0000_0000`（静默忽略，不挂起总线）。
+**未映射地址处理**：互连模块对未映射地址在请求后的下一周期返回 `ack = 1`，`dat = 32'h0000_0000`（由 `unmapped_pending_r` 驱动，仅在上一拍确实发生未映射访问时产生单拍响应，空闲时不误发 ACK）。
 
-### 4.2 地址布局设计理由
+### 4.2 仿真退出控制信箱 (SIM_CTRL / Mailbox)
+
+在纯仿真环境下（Testbench），测试固件需要向外部环境通报测试完成状态与 PASS/FAIL 结果。
+- **信箱地址选择**：早期 ISA 冒烟测试曾临时使用 `0x0000_1000` 作为退出信箱。但由于 `0x0000_0000 ~ 0x0000_FFFF` 为实际的 64KB 片上 SRAM，当后续移植 C 运行时环境与 CoreMark 等复杂软件时，`0x0000_1000` 极易与 C 程序的代码段、全局数据段或栈段产生物理重叠冲突。因此，SoC 规范将仿真控制信箱规范化迁移至高地址空间 `0xFFFF_FFF0`（`SIM_CTRL`，同时 Testbench 保持向后兼容 `0x0000_1000`）。
+- **硬件与总线行为**：在实际硬件物理实现中，`0xFFFF_FFF0` 属于未映射地址区域（Unmapped Address），不挂接任何物理从设备；`wb_interconnect` 在接收到对该区域的访存请求后，于下一拍自动返回虚拟单拍 `ACK = 1` 且读数据为 `DAT = 32'h0000_0000`，确保 CPU 流水线正常推进而不挂起。
+- **仿真 Testbench 行为**：`tb_soc.v` 持续嗅探 CPU 核心的 `dmem_addr`。当检测到向 `0xFFFF_FFF0`（或兼容地址 `0x0000_1000`）写入时，判定为仿真退出指令：写入 `32'h0000_0001` 代表测试 PASS，写入其他非零值代表特定错误码 FAIL。
+
+### 4.3 地址布局设计理由
 
 | 选择 | 理由 |
 |:-----|:-----|
@@ -161,6 +179,7 @@ wire sel_none  = ~(sel_sram | sel_clint | sel_uart);  // 未映射区域
 | CLINT 在 `0x0200_0000` | RISC-V 特权级规范硬性约定的标准地址；多数 RISC-V 工具链默认此地址 |
 | UART 在 `0x1001_0000` | SiFive FE310 UART0 地址惯例；留出 `0x1001_1000` 等地址给未来外设 |
 | DDR3 在 `0x8000_0000` | RISC-V 规范标准 DRAM 起始地址；Spike 默认 DRAM 基址也是此值 |
+| SIM_CTRL 在 `0xFFFF_FFF0` | 远离 64KB SRAM，避免 C 程序段冲突；硬件上天然落入未映射区虚拟 ACK |
 
 ---
 
@@ -209,7 +228,7 @@ module wb_core_bridge (
 
 > **S1 简化**：桥不检查 `wbm_ack_i`，不生成流水线停顿。所有从设备保证 1 周期响应，时序与直连 BRAM 等价。
 >
-> **S3 升级路径**：增加 `dmem_stall` 输出至 `hazard_unit`，当 `wbm_ack_i` 未及时返回时冻结流水线（Cache Miss、DDR3 延迟等场景）。
+> **S3 升级路径（独立未来微架构升级）**：在 S3 阶段接入可变延迟访存（D-Cache Miss / DDR3 等）时，需对 CPU `core.v` 增加 `dmem_stall` 停顿控制，并在 `wb_core_bridge.v` 中实现状态机握手与流水线冻结。这是未来的独立升级，不影响 S1b 的简单性。
 
 ---
 
@@ -271,20 +290,26 @@ assign wbs2_cyc_o = wbm_cyc_i & sel_clint;
 // we, adr, dat, sel 直通（广播，从设备仅在 stb 有效时响应）
 // 省略：wbsX_we_o = wbm_we_i; wbsX_adr_o = wbm_adr_i; ...
 
-// 读数据多路选择（组合逻辑）
+// 读数据与 ACK 多路选择（基于上一拍译码结果 sel_r 与 unmapped_pending_r）
 always @(*) begin
-    if (sel_sram)       wbm_dat_o = wbs0_dat_i;
-    else if (sel_uart)  wbm_dat_o = wbs1_dat_i;
-    else if (sel_clint) wbm_dat_o = wbs2_dat_i;
-    else                wbm_dat_o = 32'h0000_0000;  // 未映射
-end
-
-// ACK 多路选择
-always @(*) begin
-    if (sel_sram)       wbm_ack_o = wbs0_ack_i;
-    else if (sel_uart)  wbm_ack_o = wbs1_ack_i;
-    else if (sel_clint) wbm_ack_o = wbs2_ack_i;
-    else                wbm_ack_o = wbm_stb_i;  // 未映射：立即 ACK 防挂起
+    case (sel_r)
+        2'd0: begin
+            wbm_dat_o = wbs0_dat_i;
+            wbm_ack_o = wbs0_ack_i;
+        end
+        2'd1: begin
+            wbm_dat_o = wbs1_dat_i;
+            wbm_ack_o = wbs1_ack_i;
+        end
+        2'd2: begin
+            wbm_dat_o = wbs2_dat_i;
+            wbm_ack_o = wbs2_ack_i;
+        end
+        default: begin
+            wbm_dat_o = 32'h0000_0000;
+            wbm_ack_o = unmapped_pending_r;  // 未映射：下一拍由互连产生单拍虚拟 ACK
+        end
+    endcase
 end
 ```
 
@@ -345,12 +370,12 @@ always @(posedge clk) begin
     wbs_dat_o <= mem[word_addr_b];  // Read-After-Write: 返回旧值 (Read-First 模式)
 end
 
-// ACK: 1 周期延迟脉冲
+// ACK: 1 周期延迟响应
 always @(posedge clk) begin
     if (!rst_n)
         wbs_ack_o <= 1'b0;
     else
-        wbs_ack_o <= wbs_cyc_i & wbs_stb_i & ~wbs_ack_o;
+        wbs_ack_o <= wbs_cyc_i & wbs_stb_i;
 end
 ```
 

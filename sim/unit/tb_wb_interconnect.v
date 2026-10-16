@@ -90,12 +90,47 @@ module tb_wb_interconnect;
         .wbs2_ack_i(wbs2_ack)
     );
 
-    // Mock slave ack generation
+    // Mock slave ack generation (匹配真实从设备: ack <= cyc & stb)
     always @(posedge clk) begin
-        wbs0_ack <= wbs0_cyc & wbs0_stb & ~wbs0_ack;
-        wbs1_ack <= wbs1_cyc & wbs1_stb & ~wbs1_ack;
-        wbs2_ack <= wbs2_cyc & wbs2_stb & ~wbs2_ack;
+        if (!rst_n) begin
+            wbs0_ack <= 1'b0;
+            wbs1_ack <= 1'b0;
+            wbs2_ack <= 1'b0;
+        end else begin
+            wbs0_ack <= wbs0_cyc & wbs0_stb;
+            wbs1_ack <= wbs1_cyc & wbs1_stb;
+            wbs2_ack <= wbs2_cyc & wbs2_stb;
+        end
     end
+
+    // Slave side-effect tracking
+    integer wbs0_we_cnt = 0;
+    integer wbs1_we_cnt = 0;
+    integer wbs2_we_cnt = 0;
+    reg [31:0] wbs0_last_wdata = 0;
+    reg [31:0] wbs1_last_wdata = 0;
+    reg [31:0] wbs2_last_wdata = 0;
+
+    always @(posedge clk) begin
+        if (rst_n) begin
+            if (wbs0_cyc & wbs0_stb & wbs0_we) begin
+                wbs0_we_cnt     <= wbs0_we_cnt + 1;
+                wbs0_last_wdata <= wbs0_dat_w;
+            end
+            if (wbs1_cyc & wbs1_stb & wbs1_we) begin
+                wbs1_we_cnt     <= wbs1_we_cnt + 1;
+                wbs1_last_wdata <= wbs1_dat_w;
+            end
+            if (wbs2_cyc & wbs2_stb & wbs2_we) begin
+                wbs2_we_cnt     <= wbs2_we_cnt + 1;
+                wbs2_last_wdata <= wbs2_dat_w;
+            end
+        end
+    end
+
+    integer saved_wbs0_cnt;
+    integer saved_wbs1_cnt;
+    integer saved_wbs2_cnt;
 
     initial begin
         #20;
@@ -109,17 +144,14 @@ module tb_wb_interconnect;
         wbm_we  <= 1'b0;
         wbm_adr <= 32'h0000_1000;
         @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0;
         #1;
-        if (!wbs0_stb || wbs1_stb || wbs2_stb) begin
-            $display("[FAIL] SRAM address decoding failed!");
-            $finish;
-        end
         if (!wbm_ack || wbm_dat_r != 32'hAAAA_0001) begin
             $display("[FAIL] SRAM read/ack failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
             $finish;
         end
-        wbm_cyc <= 1'b0;
-        wbm_stb <= 1'b0;
+        @(posedge clk);
 
         // Test 2: Access UART (0x1001_0000)
         @(posedge clk);
@@ -129,17 +161,14 @@ module tb_wb_interconnect;
         wbm_adr <= 32'h1001_0000;
         wbm_dat <= 32'h0000_0041;
         @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0;
         #1;
-        if (wbs0_stb || !wbs1_stb || wbs2_stb) begin
-            $display("[FAIL] UART address decoding failed!");
-            $finish;
-        end
         if (!wbm_ack) begin
             $display("[FAIL] UART ack failed");
             $finish;
         end
-        wbm_cyc <= 1'b0;
-        wbm_stb <= 1'b0;
+        @(posedge clk);
 
         // Test 3: Access CLINT (0x0200_BFF8)
         @(posedge clk);
@@ -148,20 +177,269 @@ module tb_wb_interconnect;
         wbm_we  <= 1'b0;
         wbm_adr <= 32'h0200_BFF8;
         @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0;
         #1;
-        if (wbs0_stb || wbs1_stb || !wbs2_stb) begin
-            $display("[FAIL] CLINT address decoding failed!");
-            $finish;
-        end
         if (!wbm_ack || wbm_dat_r != 32'hCCCC_0003) begin
             $display("[FAIL] CLINT read/ack failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
             $finish;
         end
+        @(posedge clk);
+
+        // =====================================================================
+        // 定向测试 1: 单个未映射读
+        // =====================================================================
+        @(posedge clk);
+        wbm_cyc <= 1'b1;
+        wbm_stb <= 1'b1;
+        wbm_we  <= 1'b0;
+        wbm_adr <= 32'h3000_0000;
+        @(posedge clk);
         wbm_cyc <= 1'b0;
         wbm_stb <= 1'b0;
+        #1;
+        if (!wbm_ack || wbm_dat_r != 32'h0000_0000) begin
+            $display("[FAIL] Test 4 Single unmapped read failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
+            $finish;
+        end
+        if (wbs0_stb || wbs1_stb || wbs2_stb) begin
+            $display("[FAIL] Test 4 Unmapped triggered slave strobe!");
+            $finish;
+        end
+        @(posedge clk);
+        #1;
+        if (wbm_ack) begin
+            $display("[FAIL] Test 4 Unmapped ACK persisted when bus idle!");
+            $finish;
+        end
+
+        // =====================================================================
+        // 定向测试 2: 单个未映射写
+        // =====================================================================
+        saved_wbs0_cnt = wbs0_we_cnt;
+        saved_wbs1_cnt = wbs1_we_cnt;
+        saved_wbs2_cnt = wbs2_we_cnt;
+        @(posedge clk);
+        wbm_cyc <= 1'b1;
+        wbm_stb <= 1'b1;
+        wbm_we  <= 1'b1;
+        wbm_adr <= 32'h4000_0000;
+        wbm_dat <= 32'hDEAD_BEEF;
+        @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0;
+        #1;
+        if (!wbm_ack) begin
+            $display("[FAIL] Test 5 Single unmapped write failed: ack=%b", wbm_ack);
+            $finish;
+        end
+        if (wbs0_we_cnt != saved_wbs0_cnt || wbs1_we_cnt != saved_wbs1_cnt || wbs2_we_cnt != saved_wbs2_cnt) begin
+            $display("[FAIL] Test 5 Unmapped write caused slave side-effects!");
+            $finish;
+        end
+        @(posedge clk);
+        #1;
+        if (wbm_ack) begin
+            $display("[FAIL] Test 5 Unmapped write ACK persisted when bus idle!");
+            $finish;
+        end
+
+        // =====================================================================
+        // 定向测试 3: 连续三个未映射访问 (背靠背)
+        // =====================================================================
+        saved_wbs0_cnt = wbs0_we_cnt;
+        saved_wbs1_cnt = wbs1_we_cnt;
+        saved_wbs2_cnt = wbs2_we_cnt;
+        @(posedge clk);
+        wbm_cyc <= 1'b1;
+        wbm_stb <= 1'b1;
+        wbm_we  <= 1'b0;
+        wbm_adr <= 32'h5000_0000; // Req 1
+        @(posedge clk);
+        wbm_we  <= 1'b1;
+        wbm_adr <= 32'h6000_0000; // Req 2
+        wbm_dat <= 32'h1111_2222;
+        #1;
+        if (!wbm_ack || wbm_dat_r != 32'h0) begin
+            $display("[FAIL] Test 6 Req 1 unmapped response failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
+            $finish;
+        end
+        @(posedge clk);
+        wbm_we  <= 1'b0;
+        wbm_adr <= 32'h7000_0000; // Req 3
+        #1;
+        if (!wbm_ack) begin
+            $display("[FAIL] Test 6 Req 2 unmapped response failed: ack=%b", wbm_ack);
+            $finish;
+        end
+        @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0; // Idle
+        #1;
+        if (!wbm_ack || wbm_dat_r != 32'h0) begin
+            $display("[FAIL] Test 6 Req 3 unmapped response failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
+            $finish;
+        end
+        @(posedge clk);
+        #1;
+        if (wbm_ack) begin
+            $display("[FAIL] Test 6 ACK did not drop to 0 after 3 unmapped accesses!");
+            $finish;
+        end
+        if (wbs0_we_cnt != saved_wbs0_cnt || wbs1_we_cnt != saved_wbs1_cnt || wbs2_we_cnt != saved_wbs2_cnt) begin
+            $display("[FAIL] Test 6 Unmapped writes touched slaves!");
+            $finish;
+        end
+
+        // =====================================================================
+        // 定向测试 4: SRAM -> UART 连续背靠背访问
+        // =====================================================================
+        saved_wbs1_cnt = wbs1_we_cnt;
+        @(posedge clk);
+        wbm_cyc <= 1'b1;
+        wbm_stb <= 1'b1;
+        wbm_we  <= 1'b0;
+        wbm_adr <= 32'h0000_1000; // SRAM read
+        @(posedge clk);
+        wbm_we  <= 1'b1;
+        wbm_adr <= 32'h1001_0000; // UART write
+        wbm_dat <= 32'h0000_0055;
+        #1;
+        if (!wbm_ack || wbm_dat_r != 32'hAAAA_0001) begin
+            $display("[FAIL] Test 7 SRAM response failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
+            $finish;
+        end
+        if (!wbs1_stb || !wbs1_we || wbs1_dat_w != 32'h55) begin
+            $display("[FAIL] Test 7 UART write strobe failed!");
+            $finish;
+        end
+        @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0;
+        #1;
+        if (!wbm_ack) begin
+            $display("[FAIL] Test 7 UART write response failed: ack=%b", wbm_ack);
+            $finish;
+        end
+        if (wbs1_we_cnt != saved_wbs1_cnt + 1 || wbs1_last_wdata != 32'h55) begin
+            $display("[FAIL] Test 7 UART write side-effect mismatch!");
+            $finish;
+        end
+        @(posedge clk);
+        #1;
+        if (wbm_ack) begin
+            $display("[FAIL] Test 7 ACK did not drop after SRAM->UART!");
+            $finish;
+        end
+
+        // =====================================================================
+        // 定向测试 5: UART -> CLINT 连续背靠背访问
+        // =====================================================================
+        saved_wbs1_cnt = wbs1_we_cnt;
+        @(posedge clk);
+        wbm_cyc <= 1'b1;
+        wbm_stb <= 1'b1;
+        wbm_we  <= 1'b1;
+        wbm_adr <= 32'h1001_0000; // UART write
+        wbm_dat <= 32'h0000_0056;
+        @(posedge clk);
+        wbm_we  <= 1'b0;
+        wbm_adr <= 32'h0200_BFF8; // CLINT read
+        #1;
+        if (!wbm_ack) begin
+            $display("[FAIL] Test 8 UART response failed: ack=%b", wbm_ack);
+            $finish;
+        end
+        @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0;
+        #1;
+        if (!wbm_ack || wbm_dat_r != 32'hCCCC_0003) begin
+            $display("[FAIL] Test 8 CLINT response failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
+            $finish;
+        end
+        if (wbs1_we_cnt != saved_wbs1_cnt + 1 || wbs1_last_wdata != 32'h56) begin
+            $display("[FAIL] Test 8 UART write side-effect mismatch!");
+            $finish;
+        end
+        @(posedge clk);
+        #1;
+        if (wbm_ack) begin
+            $display("[FAIL] Test 8 ACK did not drop after UART->CLINT!");
+            $finish;
+        end
+
+        // =====================================================================
+        // 定向测试 6: CLINT -> Unmapped 连续背靠背访问
+        // =====================================================================
+        @(posedge clk);
+        wbm_cyc <= 1'b1;
+        wbm_stb <= 1'b1;
+        wbm_we  <= 1'b0;
+        wbm_adr <= 32'h0200_BFF8; // CLINT read
+        @(posedge clk);
+        wbm_adr <= 32'h3000_0000; // Unmapped read
+        #1;
+        if (!wbm_ack || wbm_dat_r != 32'hCCCC_0003) begin
+            $display("[FAIL] Test 9 CLINT response failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
+            $finish;
+        end
+        @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0;
+        #1;
+        if (!wbm_ack || wbm_dat_r != 32'h0000_0000) begin
+            $display("[FAIL] Test 9 Unmapped response failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
+            $finish;
+        end
+        @(posedge clk);
+        #1;
+        if (wbm_ack) begin
+            $display("[FAIL] Test 9 ACK did not drop after CLINT->Unmapped!");
+            $finish;
+        end
+
+        // =====================================================================
+        // 定向测试 7: Unmapped -> SRAM 连续背靠背访问
+        // =====================================================================
+        saved_wbs0_cnt = wbs0_we_cnt;
+        saved_wbs1_cnt = wbs1_we_cnt;
+        saved_wbs2_cnt = wbs2_we_cnt;
+        @(posedge clk);
+        wbm_cyc <= 1'b1;
+        wbm_stb <= 1'b1;
+        wbm_we  <= 1'b1;
+        wbm_adr <= 32'h3000_0000; // Unmapped write
+        wbm_dat <= 32'h9999_9999;
+        @(posedge clk);
+        wbm_we  <= 1'b0;
+        wbm_adr <= 32'h0000_2000; // SRAM read
+        #1;
+        if (!wbm_ack) begin
+            $display("[FAIL] Test 10 Unmapped write response failed: ack=%b", wbm_ack);
+            $finish;
+        end
+        if (wbs0_we_cnt != saved_wbs0_cnt || wbs1_we_cnt != saved_wbs1_cnt || wbs2_we_cnt != saved_wbs2_cnt) begin
+            $display("[FAIL] Test 10 Unmapped write touched slaves!");
+            $finish;
+        end
+        @(posedge clk);
+        wbm_cyc <= 1'b0;
+        wbm_stb <= 1'b0;
+        #1;
+        if (!wbm_ack || wbm_dat_r != 32'hAAAA_0001) begin
+            $display("[FAIL] Test 10 SRAM response failed: ack=%b, dat=%h", wbm_ack, wbm_dat_r);
+            $finish;
+        end
+        @(posedge clk);
+        #1;
+        if (wbm_ack) begin
+            $display("[FAIL] Test 10 ACK did not drop after Unmapped->SRAM!");
+            $finish;
+        end
 
         #20;
-        $display("ALL WB_INTERCONNECT TESTS PASSED");
+        $display("ALL WB_INTERCONNECT TESTS PASSED (INCLUDING DIRECTED UNMAPPED & BACK-TO-BACK)");
         $finish;
     end
 

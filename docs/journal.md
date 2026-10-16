@@ -143,8 +143,8 @@
   - `rtl/soc/wb_clint.v`：标准 64 位单调递增时钟 `mtime`/`mtimecmp` 与定时器中断发生器；
   - `rtl/soc/soc_top.v`：SoC 顶层集成模块。
 - **验证交付**：
-  - 单元测试：`tb_wb_interconnect.v`、`tb_wb_uart.v`、`tb_wb_clint.v`（9 项单元测试全部通过）；
-  - 系统集成测试：`sim/soc/test_soc.S` + `sim/soc/tb_soc.v`（验证汇编指令经由 Wishbone 访问 SRAM、向 UART 打印 "Hi!\n" 并在 TB 端接收校验字符流、轮询 CLINT 递增计数）；
+  - 单元测试：`tb_wb_interconnect.v`（含 7 项定向测试，全面覆盖单次/连续未映射地址虚拟 ACK、跨从设备背靠背连续切换与总线空闲 ACK 回落）、`tb_wb_uart.v`、`tb_wb_clint.v`（全部通过）；
+  - 系统集成测试：`sim/soc/test_soc.S` + `sim/soc/tb_soc.v`（验证汇编指令经由 Wishbone 访问 SRAM、向 UART 打印 "Hi!\n" 并在 TB 端接收校验字符流、轮询 CLINT 递增计数；支持高地址 `0xFFFF_FFF0` 与 `0x0000_1000` 信箱；触发当拍即时锁存性能指标，消除串口排空等待污染）；
   - 回归测试：`make lint`（0 警告）、`make unit-test`、`make test-core`、`make test-soc`、`make isa-test`（38/38）、`make difftest`（38/38 Spike DiffTest 100% 匹配）。
 
 ---
@@ -187,3 +187,30 @@
   1. 去除 `~wbs_ack_o` 对写使能的误门控，`wbs_ack_o <= wbs_cyc_i & wbs_stb_i`；
   2. 在 `tx_pop` 触发时，同步将当前 `tx_mem[tx_rptr]` 打拍锁存入 `tx_phy_data`，并用 `~tx_phy_valid` 锁住下一拍的重复 pop，彻底消除了指针前移造成的数据撕裂。
 - **教训**：在软硬件协同总线接口中，背靠背（Back-to-Back）传输和单周期脉冲是非常关键的边界场景。FIFO 的读出数据有效性与读指针推进必须在时序上严格对齐（对同步 FIFO，最稳妥的做法是在 pop 发生时锁存读出数据，或使用 Skid Buffer / FWFT 机制）。
+
+---
+
+### BUG-006: 仿真 Mailbox 串口排空延时污染性能计数器与信箱地址冲突隐患
+
+- **模块**：`sim/soc/tb_soc.v`, `docs/spec/soc.md`
+- **现象**：在 SoC 顶层冒烟测试 `test_soc.S` 运行中，虽然核心测试逻辑仅 ~30 条汇编指令（含 50 次循环延时，实际仅退休 128 条指令），但 Testbench 最终输出的性能统计却为 `Cycles: 2733, Instructions: 963, CPI: 2.84`，指令数与周期数严重失真，CPI 偏高数倍。
+- **定位过程**：
+  1. 检查 `test_soc.S` 汇编执行流程，程序在向 Mailbox 写入 1（PASS）后进入 `spin_pass: j spin_pass` 死循环等待仿真退出；
+  2. 检查 `tb_soc.v` 发现：在检测到 Mailbox 写入后，为了防止物理 UART 的 TX FIFO 内部未发完的字符被直接截断，Testbench 执行了 `repeat (2500) @(posedge clk);` 等待物理串口串行序列化输出；
+  3. 在这 2500 个等待周期内，CPU 核心并没有停止工作，而是在 `spin_pass` 死循环中高速空转，持续产生 `j spin_pass` 的取指、执行与写回，导致仿真周期计数器 `cycles` 暴增 2500 拍，`perf_instret` 额外虚增了 800+ 条指令；
+  4. 同时审查发现，旧 Mailbox 地址 `0x0000_1000` 位于片上 64KB SRAM（`0x0000_0000 ~ 0x0000_FFFF`）内，在后续运行 C 程序/CoreMark 时与代码段/全局数据段/栈段存在物理地址冲突隐患。
+- **根因**：
+  1. Testbench 将“等待外设排空”的仿真延时与“被测程序本身”的执行周期/指令统计混为一谈，未在 Mailbox 触发时刻对硬件性能计数器进行即时采样锁存；
+  2. 仿真退出信箱地址侵占了物理 SRAM 的可用寻址空间。
+- **修复**：
+  1. **性能计数器即时锁存**：在 `tb_soc.v` 检测到 Mailbox 写入（`u_soc.u_core.dmem_wdata == 32'h0000_0001`）的**当拍**（在 `repeat (2500)` 执行前），立即锁存当拍的 `perf_cycle` 与 `perf_instret`：
+     ```verilog
+     final_cycles  = perf_cycle;
+     final_instret = perf_instret;
+     repeat (2500) @(posedge clk);
+     $display("Cycles: %0d, Instructions: %0d, CPI: %0.2f",
+              final_cycles, final_instret, $itor(final_cycles) / $itor(final_instret));
+     ```
+     修复后实测输出精确反映程序真实性能：`Cycles: 233, Instructions: 128, CPI: 1.82`；
+  2. **高地址仿真信箱与后向兼容**：扩展 Mailbox 触发条件支持高位未映射地址 `0xFFFF_FFF0`（`SIM_CTRL`），同时保持兼容旧地址 `0x0000_1000`；在硬件上依赖 `wb_interconnect` 对未映射地址返回虚拟单拍 `ACK=1, DAT=0`，避免对 64KB SRAM 内部物理空间的污染。
+- **教训**：芯片验证中的性能剖析（Profiling）必须将被测核心的有效运行区间与仿真环境自身的清理/排空操作在时序上完全解耦；仿真控制信箱宜选择远离任何合法存储器与外设的保留高地址。

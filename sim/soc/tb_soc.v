@@ -8,7 +8,7 @@
 //   1. 例化 soc_top 顶层；
 //   2. 支持通过 +HEX=<file.hex> 动态加载裸机固件；
 //   3. 实时解码 uart_txd 物理串口引脚，打印字符输出流；
-//   4. 监控 0x0000_1000 Mailbox 写入，自动化判决测试通过或失败；
+//   4. 监控 0x0000_1000 / 0xFFFF_FFF0 Mailbox 写入，自动化判决测试通过或失败；
 //   5. 统计周期数、指令数与 CPI。
 // -----------------------------------------------------------------------------
 module tb_soc;
@@ -83,6 +83,8 @@ module tb_soc;
     integer      i;
     integer      timeout_cycles = 100000;
     integer      cycles = 0;
+    integer      final_cycles = 0;
+    integer      final_instret = 0;
 
     initial begin
         // 初始化内存为 NOP
@@ -96,7 +98,7 @@ module tb_soc;
 
         void'($value$plusargs("TIMEOUT=%d", timeout_cycles));
 
-        // 装载 Hex
+        // 装载 Hex (由 tb 直接初始化 u_soc.u_sram.mem，wb_sram 编译时未定义 SIM 宏，避免重复加载冲突)
         $readmemh(hex_file, byte_mem);
         for (i = 0; i < SRAM_WORDS; i = i + 1) begin
             u_soc.u_sram.mem[i] = {byte_mem[i*4+3], byte_mem[i*4+2],
@@ -108,22 +110,29 @@ module tb_soc;
         rst_n = 1'b1;
     end
 
-    // Mailbox 监控
+    // 独立周期计数器（不受监控逻辑与阻塞等待影响）
     always @(posedge clk) begin
         if (rst_n) begin
             cycles <= cycles + 1;
+        end
+    end
 
-            // 检查 CPU 对 0x0000_1000 的写操作
+    // Mailbox 监控与仿真结束控制
+    always @(posedge clk) begin
+        if (rst_n) begin
+            // 检查 CPU 对 0x0000_1000 或 0xFFFF_FFF0 的写操作
             if (u_soc.u_core.dmem_req && (|u_soc.u_core.dmem_byte_we) &&
-                (u_soc.u_core.dmem_addr == 32'h0000_1000)) begin
-                $display("\n[MAILBOX] CPU wrote 0x%08x to 0x00001000", u_soc.u_core.dmem_wdata);
+                ((u_soc.u_core.dmem_addr == 32'h0000_1000) || (u_soc.u_core.dmem_addr == 32'hFFFF_FFF0))) begin
+                $display("\n[MAILBOX] CPU wrote 0x%08x to 0x%08x", u_soc.u_core.dmem_wdata, u_soc.u_core.dmem_addr);
                 if (u_soc.u_core.dmem_wdata == 32'h0000_0001) begin
+                    final_cycles  = perf_cycle;
+                    final_instret = perf_instret;
                     // 等待物理串口将 TX FIFO 中的字符全部序列化发送完毕
                     repeat (2500) @(posedge clk);
                     $display("\n==============================================");
                     $display("SOC VERIFICATION PASSED");
                     $display("Cycles: %0d, Instructions: %0d, CPI: %0.2f",
-                             cycles, perf_instret, $itor(cycles) / $itor(perf_instret));
+                             final_cycles, final_instret, $itor(final_cycles) / $itor(final_instret));
                     $display("==============================================");
                     $finish;
                 end else begin
