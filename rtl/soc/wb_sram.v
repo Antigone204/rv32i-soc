@@ -9,10 +9,12 @@
 //   - 可推断为 FPGA True Dual-Port Block RAM (DRM)。
 //
 // 参数：
-//   WORDS : 32 位字容量，默认 16384 (64 KB)
+//   WORDS         : 32 位字容量，默认 16384 (64 KB)
+//   MEM_INIT_FILE : 初始固件十六进制字文件路径（FPGA 综合 BRAM 初始化）
 // -----------------------------------------------------------------------------
 module wb_sram #(
-    parameter integer WORDS = 16384
+    parameter integer WORDS         = 16384,
+    parameter         MEM_INIT_FILE = ""
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -39,6 +41,13 @@ module wb_sram #(
 
     // 存储器阵列定义 (可综合推断为 BRAM)
     reg [31:0] mem [0:WORDS-1];
+
+    // FPGA BRAM 初始镜像综合加载 (PDS 综合识别)
+    initial begin
+        if (MEM_INIT_FILE != "") begin
+            $readmemh(MEM_INIT_FILE, mem);
+        end
+    end
 
     wire [AW-1:0] word_addr_a = imem_addr[AW+1:2];
     wire [AW-1:0] word_addr_b = wbs_adr_i[AW+1:2];

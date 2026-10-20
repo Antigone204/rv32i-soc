@@ -13,7 +13,7 @@
 // 复位：内部上电复位计数器，不依赖外部按键。
 // -----------------------------------------------------------------------------
 module smoke_top #(
-    parameter integer CLK_HZ = 50_000_000,
+    parameter integer CLK_HZ = 27_000_000,
     parameter integer BAUD   = 115_200
 ) (
     input  wire       sys_clk,

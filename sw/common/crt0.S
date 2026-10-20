@@ -87,4 +87,13 @@ _start:
     sw   t1, 0(t0)
 
 .Lhalt:
+#ifdef FPGA_BOARD_LOOP
+    // 板级友好设计：延时约 3 秒（约 20,000,000 次循环），跳回 _start 重新运行并再次打印
+    li   t2, 20000000
+.Ldelay:
+    addi t2, t2, -1
+    bnez t2, .Ldelay
+    j    _start
+#else
     j    .Lhalt
+#endif

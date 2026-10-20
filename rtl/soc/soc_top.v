@@ -13,9 +13,10 @@
 //   - 调试与追踪：导出精确提交接口 (wb_valid, wb_pc, ...) 与心跳/状态 LED。
 // -----------------------------------------------------------------------------
 module soc_top #(
-    parameter integer CLK_HZ     = 50_000_000,
-    parameter integer BAUD       = 115_200,
-    parameter integer SRAM_WORDS = 16384       // 16K x 32bit = 64 KB
+    parameter integer CLK_HZ        = 50_000_000,
+    parameter integer BAUD          = 115_200,
+    parameter integer SRAM_WORDS    = 16384,      // 16K x 32bit = 64 KB
+    parameter         MEM_INIT_FILE = ""
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -189,7 +190,8 @@ module soc_top #(
     // 5. 例化片上双端口 SRAM
     // =========================================================================
     wb_sram #(
-        .WORDS(SRAM_WORDS)
+        .WORDS        (SRAM_WORDS),
+        .MEM_INIT_FILE(MEM_INIT_FILE)
     ) u_sram (
         .clk       (clk),
         .rst_n     (rst_n),

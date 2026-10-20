@@ -12,12 +12,14 @@ RTL_SOC     := rtl/soc/uart_tx.v rtl/soc/uart_rx.v rtl/soc/wb_core_bridge.v \
                rtl/soc/wb_interconnect.v rtl/soc/wb_sram.v rtl/soc/wb_uart.v \
                rtl/soc/wb_clint.v rtl/soc/soc_top.v
 SMOKE_SRCS  := rtl/soc/uart_tx.v rtl/soc/uart_rx.v platform/pango/smoke_top.v
+FPGA_SRCS   := platform/pango/fpga_top.v $(RTL_SOC) $(RTL_CORE)
 
-.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-wb-interconnect test-wb-uart test-wb-clint test-soc test-c coremark unit-test isa-test difftest toolcheck clean
+.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-wb-interconnect test-wb-uart test-wb-clint test-soc test-c coremark fpga-fw unit-test isa-test difftest toolcheck clean
 
 help:
 	@echo "make toolcheck    - 检查本地工具链"
 	@echo "make lint         - Verilator lint（零警告检查）"
+	@echo "make fpga-fw      - 编译板级 CoreMark 固件并生成 platform/pango/firmware_words.hex"
 	@echo "make unit-test    - 运行全部单元测试（含 ALU/译码/前推/冒险/Wishbone/UART/CLINT）"
 	@echo "make test-core    - 运行 5 级流水线集成自检测试"
 	@echo "make test-soc     - 运行 SoC 顶层软硬件集成冒烟测试 (SRAM/UART/CLINT)"
@@ -38,6 +40,7 @@ lint:
 	verilator --lint-only -Wall --top-module smoke_top $(SMOKE_SRCS)
 	verilator --lint-only -Wall -Irtl/core --top-module core $(RTL_CORE)
 	verilator --lint-only -Wall -Irtl/core -Irtl/soc --top-module soc_top $(RTL_SOC) $(RTL_CORE)
+	verilator --lint-only -Wall -Irtl/core -Irtl/soc --top-module fpga_top $(FPGA_SRCS)
 
 test-alu:
 	@mkdir -p $(BUILD)
@@ -135,6 +138,20 @@ coremark: $(BUILD)/coremark.hex
 	@grep -q "Correct operation validated" $(BUILD)/coremark.log
 	@grep -q "CoreMark/MHz" $(BUILD)/coremark.log
 	@grep -q "SOC VERIFICATION PASSED" $(BUILD)/coremark.log
+
+FPGA_FW_HEX    := platform/pango/firmware_words.hex
+
+$(BUILD)/coremark_board.elf: $(SW_COMMON_SRCS) $(COREMARK_SRCS) sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/coremark/coremark.h sw/coremark/core_portme.h
+	@mkdir -p $(BUILD)
+	$(CROSS)gcc -march=rv32i_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DITERATIONS=2 -DFLAGS_STR="\"-march=rv32i_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
+
+$(BUILD)/coremark_board.bin: $(BUILD)/coremark_board.elf
+	$(CROSS)objcopy -O binary $< $@
+
+$(FPGA_FW_HEX): $(BUILD)/coremark_board.bin sw/common/bin2words.py
+	python3 sw/common/bin2words.py $< $@ 16384
+
+fpga-fw: $(FPGA_FW_HEX)
 
 test-core:
 	@mkdir -p $(BUILD)
