@@ -125,6 +125,7 @@ module core (
     /* verilator lint_off UNUSEDSIGNAL */
     wire        id_illegal_inst;  // 异常处理扩展预留
     /* verilator lint_on UNUSEDSIGNAL */
+    wire        id_muldiv_en;
 
     // 实例化主控制译码器
     decoder u_decoder (
@@ -145,7 +146,8 @@ module core (
         .branch      (id_branch),
         .jal         (id_jal),
         .jalr        (id_jalr),
-        .illegal_inst(id_illegal_inst)
+        .illegal_inst(id_illegal_inst),
+        .muldiv_en   (id_muldiv_en)
     );
 
     // 实例化立即数扩展单元
@@ -195,6 +197,7 @@ module core (
     reg        id_ex_jal;
     reg        id_ex_jalr;
     reg        id_ex_valid;
+    reg        id_ex_muldiv_en;
 
     // 前推多路选择器输出声明 (供 ID/EX 停顿锁存及 EX 计算使用)
     reg [31:0] ex_fwd_val_a;
@@ -221,6 +224,7 @@ module core (
             id_ex_jal        <= 1'b0;
             id_ex_jalr       <= 1'b0;
             id_ex_valid      <= 1'b0;
+            id_ex_muldiv_en  <= 1'b0;
         end else if (stall_id_ex) begin
             // BUG-003: 停顿期间锁存当拍前推结果，防止前推源在后续周期写回后离开流水线导致操作数丢失
             id_ex_rs1_data   <= ex_fwd_val_a;
@@ -245,6 +249,7 @@ module core (
             id_ex_jal        <= id_jal;
             id_ex_jalr       <= id_jalr;
             id_ex_valid      <= if_id_valid;
+            id_ex_muldiv_en  <= id_muldiv_en;
         end
     end
 
@@ -289,6 +294,28 @@ module core (
         .alu_out(ex_alu_out),
         .zero   (ex_alu_zero)
     );
+
+    // 实例化 M 扩展乘除法单元
+    wire        ex_muldiv_busy;
+    /* verilator lint_off UNUSEDSIGNAL */
+    wire        ex_muldiv_done;
+    /* verilator lint_on UNUSEDSIGNAL */
+    wire [31:0] ex_muldiv_result;
+
+    muldiv u_muldiv (
+        .clk     (clk),
+        .rst_n   (rst_n),
+        .valid_i (id_ex_valid & id_ex_muldiv_en),
+        .flush_i (1'b0),
+        .funct3_i(id_ex_funct3),
+        .op_a_i  (ex_fwd_val_a),
+        .op_b_i  (ex_fwd_val_b),
+        .busy_o  (ex_muldiv_busy),
+        .done_o  (ex_muldiv_done),
+        .result_o(ex_muldiv_result)
+    );
+
+    wire [31:0] ex_result = (id_ex_muldiv_en) ? ex_muldiv_result : ex_alu_out;
 
     // 分支条件裁决逻辑 (Branch Comparator)
     reg ex_br_cond;
@@ -337,7 +364,7 @@ module core (
             ex_mem_valid      <= 1'b0;
         end else begin
             ex_mem_pc         <= id_ex_pc;
-            ex_mem_alu_out    <= ex_alu_out;
+            ex_mem_alu_out    <= ex_result;
             ex_mem_rs2_data   <= ex_fwd_val_b;
             ex_mem_rd         <= id_ex_rd;
             ex_mem_funct3     <= id_ex_funct3;
@@ -505,6 +532,7 @@ module core (
         .id_ex_mem_read   (id_ex_valid & id_ex_mem_read),
         .id_ex_rd         (id_ex_rd),
         .ex_mem_mem_write (ex_mem_valid & ex_mem_mem_write),
+        .ex_muldiv_busy   (ex_muldiv_busy),
         .branch_taken     (branch_taken),
         .jal              (id_ex_valid & id_ex_jal),
         .jalr             (id_ex_valid & id_ex_jalr),

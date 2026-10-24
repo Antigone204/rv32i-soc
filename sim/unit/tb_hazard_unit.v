@@ -11,6 +11,7 @@ module tb_hazard_unit;
     reg        jalr;
 
     reg        ex_mem_mem_write;
+    reg        ex_muldiv_busy;
 
     wire stall_pc;
     wire stall_if_id;
@@ -26,6 +27,7 @@ module tb_hazard_unit;
         .id_ex_mem_read   (id_ex_mem_read),
         .id_ex_rd         (id_ex_rd),
         .ex_mem_mem_write (ex_mem_mem_write),
+        .ex_muldiv_busy   (ex_muldiv_busy),
         .branch_taken     (branch_taken),
         .jal              (jal),
         .jalr             (jalr),
@@ -68,6 +70,7 @@ module tb_hazard_unit;
         if_id_rs1 = 5'd1; if_id_rs2 = 5'd2;
         id_ex_mem_read = 1'b0; id_ex_rd = 5'd3;
         ex_mem_mem_write = 1'b0;
+        ex_muldiv_busy = 1'b0;
         branch_taken = 1'b0; jal = 1'b0; jalr = 1'b0;
         check(1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, "NORMAL_FLOW");
 
@@ -93,6 +96,12 @@ module tb_hazard_unit;
         id_ex_mem_read = 1'b1; id_ex_rd = 5'd8; // EX 级为 Load (写 x8，与 ID 级 x1/x2 无 RAW 依赖)
         ex_mem_mem_write = 1'b1;               // MEM 级为 Store
         check(1'b1, 1'b1, 1'b1, 1'b0, 1'b0, 1'b1, "SW_THEN_LW_STRUCTURAL_HAZARD");
+
+        // 7. M 扩展乘除法多周期停顿 (EX 级乘除法忙，冻结 PC/IF_ID/ID_EX，向 EX/MEM 注入气泡)
+        id_ex_mem_read = 1'b0;
+        ex_mem_mem_write = 1'b0;
+        ex_muldiv_busy = 1'b1;
+        check(1'b1, 1'b1, 1'b1, 1'b0, 1'b0, 1'b1, "MULDIV_STALL");
 
         if (errors == 0) begin
             $display("\n>>> ALL HAZARD UNIT TESTS PASSED <<<");

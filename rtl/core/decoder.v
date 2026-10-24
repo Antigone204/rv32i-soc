@@ -48,7 +48,10 @@ module decoder (
     output reg         jalr,
 
     // 异常/未定义指令指示
-    output reg         illegal_inst
+    output reg         illegal_inst,
+
+    // M 扩展乘除法使能指示 (OPCODE_OP && funct7 == 7'b0000001)
+    output reg         muldiv_en
 );
     // 立即数类型编码
     localparam [2:0] IMM_I = 3'd0,
@@ -97,6 +100,7 @@ module decoder (
         jal          = 1'b0;
         jalr         = 1'b0;
         illegal_inst = 1'b0;
+        muldiv_en    = 1'b0;
 
         case (opcode)
             // ---------------- R-Type: 寄存器之间运算 ----------------
@@ -105,17 +109,21 @@ module decoder (
                 alu_src_a = 1'b0; // rs1
                 alu_src_b = 1'b0; // rs2
                 wb_src_sel = WB_SRC_ALU;
-                case (funct3)
-                    3'b000:  alu_op = (funct7[5]) ? `ALU_SUB : `ALU_ADD;
-                    3'b001:  alu_op = `ALU_SLL;
-                    3'b010:  alu_op = `ALU_SLT;
-                    3'b011:  alu_op = `ALU_SLTU;
-                    3'b100:  alu_op = `ALU_XOR;
-                    3'b101:  alu_op = (funct7[5]) ? `ALU_SRA : `ALU_SRL;
-                    3'b110:  alu_op = `ALU_OR;
-                    3'b111:  alu_op = `ALU_AND;
-                    default: illegal_inst = 1'b1;
-                endcase
+                if (funct7 == 7'b0000001) begin
+                    muldiv_en = 1'b1;
+                end else begin
+                    case (funct3)
+                        3'b000:  alu_op = (funct7[5]) ? `ALU_SUB : `ALU_ADD;
+                        3'b001:  alu_op = `ALU_SLL;
+                        3'b010:  alu_op = `ALU_SLT;
+                        3'b011:  alu_op = `ALU_SLTU;
+                        3'b100:  alu_op = `ALU_XOR;
+                        3'b101:  alu_op = (funct7[5]) ? `ALU_SRA : `ALU_SRL;
+                        3'b110:  alu_op = `ALU_OR;
+                        3'b111:  alu_op = `ALU_AND;
+                        default: illegal_inst = 1'b1;
+                    endcase
+                end
             end
 
             // ---------------- I-Type: 立即数计算 ----------------

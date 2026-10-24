@@ -7,14 +7,15 @@ GCC_DIR     := $(firstword $(wildcard tools/xpack-riscv-none-elf-gcc-*/bin))
 CROSS       := $(GCC_DIR)/riscv-none-elf-
 
 RTL_CORE    := rtl/core/core.v rtl/core/alu.v rtl/core/regfile.v rtl/core/imm_gen.v \
-               rtl/core/decoder.v rtl/core/forwarding_unit.v rtl/core/hazard_unit.v
+               rtl/core/decoder.v rtl/core/forwarding_unit.v rtl/core/hazard_unit.v \
+               rtl/core/muldiv.v
 RTL_SOC     := rtl/soc/uart_tx.v rtl/soc/uart_rx.v rtl/soc/wb_core_bridge.v \
                rtl/soc/wb_interconnect.v rtl/soc/wb_sram.v rtl/soc/wb_uart.v \
                rtl/soc/wb_clint.v rtl/soc/soc_top.v
 SMOKE_SRCS  := rtl/soc/uart_tx.v rtl/soc/uart_rx.v platform/pango/smoke_top.v
 FPGA_SRCS   := platform/pango/fpga_top.v $(RTL_SOC) $(RTL_CORE)
 
-.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-wb-interconnect test-wb-uart test-wb-clint test-soc test-c coremark fpga-fw unit-test isa-test difftest toolcheck clean
+.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-muldiv test-wb-interconnect test-wb-uart test-wb-clint test-soc test-c coremark fpga-fw unit-test isa-test difftest toolcheck clean
 
 help:
 	@echo "make toolcheck    - 检查本地工具链"
@@ -78,6 +79,12 @@ test-hazard:
 	vvp -n $(BUILD)/tb_hazard_unit.vvp | tee $(BUILD)/test_hazard.log
 	@grep -q "ALL HAZARD UNIT TESTS PASSED" $(BUILD)/test_hazard.log
 
+test-muldiv:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -o $(BUILD)/tb_muldiv.vvp sim/unit/tb_muldiv.v rtl/core/muldiv.v
+	vvp -n $(BUILD)/tb_muldiv.vvp | tee $(BUILD)/test_muldiv.log
+	@grep -q "ALL MULDIV TESTS PASSED" $(BUILD)/test_muldiv.log
+
 test-wb-interconnect:
 	@mkdir -p $(BUILD)
 	iverilog -g2012 -o $(BUILD)/tb_wb_interconnect.vvp sim/unit/tb_wb_interconnect.v rtl/soc/wb_interconnect.v
@@ -96,7 +103,7 @@ test-wb-clint:
 	vvp -n $(BUILD)/tb_wb_clint.vvp | tee $(BUILD)/test_wb_clint.log
 	@grep -q "ALL WB_CLINT TESTS PASSED" $(BUILD)/test_wb_clint.log
 
-unit-test: test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard \
+unit-test: test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-muldiv \
            test-wb-interconnect test-wb-uart test-wb-clint
 
 $(BUILD)/test_soc.hex: sim/soc/test_soc.S sim/isa/env/link.ld
@@ -114,7 +121,7 @@ SW_COMMON_SRCS := sw/common/crt0.S sw/common/uart.c sw/common/timer.c sw/common/
 
 $(BUILD)/test_c.hex: $(SW_COMMON_SRCS) sw/test_c/main.c sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/common/str.h
 	@mkdir -p $(BUILD)
-	$(CROSS)gcc -march=rv32i_zicsr -mabi=ilp32 -O2 -Wall -Wextra -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/test_c/main.c -lgcc -o $(BUILD)/test_c.elf
+	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -Wall -Wextra -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/test_c/main.c -lgcc -o $(BUILD)/test_c.elf
 	$(CROSS)objcopy -O verilog $(BUILD)/test_c.elf $@
 
 test-c: $(BUILD)/test_c.hex
@@ -128,7 +135,7 @@ COREMARK_SRCS  := $(wildcard sw/coremark/*.c)
 
 $(BUILD)/coremark.hex: $(SW_COMMON_SRCS) $(COREMARK_SRCS) sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/coremark/coremark.h sw/coremark/core_portme.h
 	@mkdir -p $(BUILD)
-	$(CROSS)gcc -march=rv32i_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DITERATIONS=2 -DFLAGS_STR="\"-march=rv32i_zicsr -mabi=ilp32 -O2 -lgcc\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $(BUILD)/coremark.elf
+	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DITERATIONS=2 -DFLAGS_STR="\"-march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $(BUILD)/coremark.elf
 	$(CROSS)objcopy -O verilog $(BUILD)/coremark.elf $@
 
 coremark: $(BUILD)/coremark.hex
@@ -143,7 +150,7 @@ FPGA_FW_HEX    := platform/pango/firmware_words.hex
 
 $(BUILD)/coremark_board.elf: $(SW_COMMON_SRCS) $(COREMARK_SRCS) sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/coremark/coremark.h sw/coremark/core_portme.h
 	@mkdir -p $(BUILD)
-	$(CROSS)gcc -march=rv32i_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DITERATIONS=2 -DFLAGS_STR="\"-march=rv32i_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
+	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DITERATIONS=2 -DFLAGS_STR="\"-march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
 
 $(BUILD)/coremark_board.bin: $(BUILD)/coremark_board.elf
 	$(CROSS)objcopy -O binary $< $@

@@ -32,20 +32,23 @@ module hazard_unit (
     // MEM 级当前指令的信息 (检测 SW->LW 结构冒险)
     input  wire       ex_mem_mem_write,
 
+    // M 扩展乘除法忙信号 (来自 EX 级 muldiv)
+    input  wire       ex_muldiv_busy,
+
     // 分支/跳转触发信号 (来自 EX 级)
     input  wire       branch_taken,
     input  wire       jal,
     input  wire       jalr,
 
     // 控制输出：流水线停顿 (Stall) 信号 (高电平有效)
-    output reg        stall_pc,
-    output reg        stall_if_id,
-    output reg        stall_id_ex,
+    output wire       stall_pc,
+    output wire       stall_if_id,
+    output wire       stall_id_ex,
 
     // 控制输出：流水线清零冲刷 (Flush) 信号 (高电平有效)
-    output reg        flush_if_id,
-    output reg        flush_id_ex,
-    output reg        flush_ex_mem,
+    output wire       flush_if_id,
+    output wire       flush_id_ex,
+    output wire       flush_ex_mem,
 
     // 状态输出：结构冒险发生中 (供 core.v 仲裁 dmem 端口)
     output wire       structural_hazard
@@ -62,34 +65,15 @@ module hazard_unit (
     wire load_use_hazard = id_ex_mem_read & (id_ex_rd != 5'd0) &
                            ((id_ex_rd == if_id_rs1) | (id_ex_rd == if_id_rs2));
 
-    always @(*) begin
-        // 默认状态：流水线全速自由前进
-        stall_pc          = 1'b0;
-        stall_if_id       = 1'b0;
-        stall_id_ex       = 1'b0;
-        flush_if_id       = 1'b0;
-        flush_id_ex       = 1'b0;
-        flush_ex_mem      = 1'b0;
+    // 1. 控制冒险最高优先级：跳转发生时冲刷流水线
+    assign flush_if_id  = jump_or_branch;
+    assign flush_id_ex  = jump_or_branch | (!ex_muldiv_busy & !structural_hazard & load_use_hazard);
 
-        // 1. 控制冒险处理 (优先级最高：跳转成立时，必须无条件冲刷错误路径指令)
-        if (jump_or_branch) begin
-            flush_if_id = 1'b1; // 清空 IF/ID 寄存器
-            flush_id_ex = 1'b1; // 清空 ID/EX 寄存器
-        end
-        // 2. SW 紧跟 LW 结构冒险处理 (停顿 1 拍：冻结 PC、IF/ID、ID/EX，向 EX/MEM 注入气泡，端口全让给 Store)
-        else if (structural_hazard) begin
-            stall_pc     = 1'b1; // 冻结 PC
-            stall_if_id  = 1'b1; // 冻结 IF/ID
-            stall_id_ex  = 1'b1; // 冻结 ID/EX (Load 指令保持在 EX 级等待)
-            flush_ex_mem = 1'b1; // 向 EX/MEM 注入气泡 (清零控制信号)
-        end
-        // 3. Load-Use 冒险处理 (停顿 1 拍并注入气泡到 ID/EX)
-        else if (load_use_hazard) begin
-            stall_pc    = 1'b1; // 冻结 PC
-            stall_if_id = 1'b1; // 保持 IF/ID 指令不变
-            flush_id_ex = 1'b1; // 向 ID/EX 注入气泡 (清零控制信号)
-        end
-    end
+    // 2. 停顿与气泡注入
+    assign flush_ex_mem = !jump_or_branch & (ex_muldiv_busy | structural_hazard);
+    assign stall_pc     = !jump_or_branch & (ex_muldiv_busy | structural_hazard | load_use_hazard);
+    assign stall_if_id  = !jump_or_branch & (ex_muldiv_busy | structural_hazard | load_use_hazard);
+    assign stall_id_ex  = !jump_or_branch & (ex_muldiv_busy | structural_hazard);
 
 endmodule
 `default_nettype wire

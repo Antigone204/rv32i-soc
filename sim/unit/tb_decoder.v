@@ -20,6 +20,7 @@ module tb_decoder;
     wire        jal;
     wire        jalr;
     wire        illegal_inst;
+    wire        muldiv_en;
 
     decoder dut (
         .inst        (inst),
@@ -39,7 +40,8 @@ module tb_decoder;
         .branch      (branch),
         .jal         (jal),
         .jalr        (jalr),
-        .illegal_inst(illegal_inst)
+        .illegal_inst(illegal_inst),
+        .muldiv_en   (muldiv_en)
     );
 
     integer errors = 0;
@@ -117,6 +119,24 @@ module tb_decoder;
         // 9. AUIPC x1, 0x12345
         inst = {20'h12345, 5'd1, 7'b0010111};
         check_ctrl(`ALU_ADD, 1'b1, 1'b1, 1'b0, 1'b0, 1'b1, 2'd0, "AUIPC");
+
+        // 10. MUL x1, x2, x3: funct7=7'b0000001, funct3=3'b000
+        inst = {7'b0000001, 5'd3, 5'd2, 3'b000, 5'd1, 7'b0110011};
+        #1;
+        if (muldiv_en !== 1'b1 || reg_write !== 1'b1 || wb_src_sel !== 2'd0) begin
+            $display("FAIL [MUL decode]"); errors = errors + 1;
+        end else begin
+            $display("PASS [MUL]");
+        end
+
+        // 11. DIV x1, x2, x3: funct7=7'b0000001, funct3=3'b100
+        inst = {7'b0000001, 5'd3, 5'd2, 3'b100, 5'd1, 7'b0110011};
+        #1;
+        if (muldiv_en !== 1'b1 || reg_write !== 1'b1 || wb_src_sel !== 2'd0) begin
+            $display("FAIL [DIV decode]"); errors = errors + 1;
+        end else begin
+            $display("PASS [DIV]");
+        end
 
         if (errors == 0) begin
             $display("\n>>> ALL DECODER TESTS PASSED <<<");

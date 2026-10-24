@@ -276,3 +276,66 @@
   - **退休指令数 (Retired Instructions)**：1,565,641 insts
   - **平均 CPI**：**1.51**
 
+
+
+---
+
+## 2026-10-24 RV32M 硬件乘除法单元实现、集成与 CoreMark 提速验证 (阶段 M1)
+
+### 阶段目标与交付物
+
+在纯 RV32I 基准架构上完整引入 RISC-V 标准整型乘除法 M 扩展（RV32M），彻底消除基础 C 运行时与 Benchmark 依赖 `libgcc` 软件移位模拟乘除法的巨大性能损耗，大幅提升核的算力密度与 CoreMark 跑分：
+
+1. **架构规格书与方案对比讲义 (`docs/spec/m_ext.md`)**：
+   - 完整定义 RV32M 支持的 8 条指令（`MUL`, `MULH`, `MULHSU`, `MULHU`, `DIV`, `DIVU`, `REM`, `REMU`）的机器码、操作数类型及语义；
+   - 详列 RISC-V 官方标准边界条件表（除以 0 静默返回确定性默认值、有符号 $-2^{31} / -1$ 溢出处理）；
+   - 深入对比三种乘法架构（32 拍移位加、FPGA 硬核 DSP 映射、Booth+Wallace 树）与三种除法架构（32 拍恢复余数试商减、Radix-4 SRT 冗余查表、牛顿/Goldschmidt 迭代）在资源、时序与时延维度的优劣取舍（Trade-offs）；
+   - 确立本设计选型：33 位符号扩展硬核 DSP 乘法（打 1 拍寄存输出，EX 级停顿 1 拍，共耗 2 拍）+ 32 拍恢复余数移位减状态机（除以 0 及溢出 1 拍快速旁路）。
+2. **纯 Verilog-2001 硬件乘除法单元 (`rtl/core/muldiv.v`)**：
+   - 代码严格控制在 165 行（满足 `AGENTS.md` 铁律 $\le 170$ 行），零厂商原语；
+   - 纯基于寄存器状态输出 `busy_o` 握手信号，当拍计算完毕置 `done_o = 1` 解除停顿，零死锁、零重复触发，完美支持背靠背连续乘除法指令流动。
+3. **独立单元测试套件 (`sim/unit/tb_muldiv.v`)**：
+   - 覆盖全部 8 条指令的正负数、极大极小边界值、大数高 32 位截断；
+   - 严苛覆盖除以 0、$-2^{31} / -1$ 溢出、背靠背流水以及除法进行中被冲刷（flush）的复位动作；
+   - 输出 `ALL MULDIV TESTS PASSED`。
+4. **低侵入流水线集成 (`decoder.v`, `hazard_unit.v`, `core.v`)**：
+   - `decoder.v`：在 R-Type 指令中识别 `funct7 == 7'b0000001` 置 `muldiv_en = 1`；
+   - `hazard_unit.v`：接入 `ex_muldiv_busy`，触发与 `sw_lw_hazard` 完全相同的精准停顿动作（冻结 PC、IF/ID、ID/EX，向 EX/MEM 注入气泡）；
+   - `core.v`：在 EX 级实例化 `muldiv`，通过 `ex_result = id_ex_muldiv_en ? ex_muldiv_result : ex_alu_out` 统一输出至 `ex_mem_alu_out`；现有的 `EX-EX` 和 `MEM-EX` 数据前推网络无需修改一行代码即可天然将乘除法结果旁路给后续指令。
+
+---
+
+### BUG-007: 流水线冲刷语义混淆导致跨模块虚假组合回路 (UNOPTFLAT)
+
+- **现象**：在 `core.v` 实例化 `muldiv` 并接入 `hazard_unit` 后，执行 `make lint` 报错：
+  `%Warning-UNOPTFLAT: Signal unoptimizable: Circular combinational logic: 'core.ex_muldiv_busy'`，Verilator 检测到 `ex_muldiv_busy -> hazard_unit -> flush_id_ex -> muldiv.flush_i -> ex_muldiv_busy` 闭合组合环路。
+- **定位过程**：
+  1. 审查 Verilator 报告的环路路径：`core.ex_muldiv_busy` 驱动 `hazard_unit`，`hazard_unit` 输出 `flush_id_ex`，`flush_id_ex` 接入 `muldiv.flush_i`，而 `muldiv.busy_o` 原式为 `assign busy_o = !flush_i && ((state == S_IDLE && valid_i && !done_o) || (state == S_DIV));`；
+  2. 尽管在逻辑上，当发生跳转冲刷时 `jump_or_branch` 具有最高优先级，但由于 `hazard_unit` 内所有信号均在同一个大过程块或相互关联的表达式中，Verilator 的静态保守数据流图认定 `flush_id_ex` 间接依赖于 `ex_muldiv_busy`，从而形成了闭环回路。
+- **根因**：
+  1. **微架构概念语义混淆**：`flush_id_ex` 是为清空 **ID 级指令**（向 ID/EX 寄存器注入气泡）而设立的信号，而 EX 级正在计算的 `muldiv` 自身并不受 ID 级的跳转冲刷影响（EX 级内只有当前一条指令）；将 ID 级冲刷信号直接引给 EX 级的内部计算单元违反了流水级冲刷的局部性原则；
+  2. **跨模块握手路径不当引入组合直通**：`busy_o` 引入 `!flush_i` 是多余的，状态机本身在时钟沿采样同步复位即可，无需在组合路径上与冲刷信号耦合。
+- **修复**：
+  1. 在 `core.v` 中解绑 `u_muldiv.flush_i` 与 `flush_id_ex`，将其与同步复位对齐或置常低 `1'b0`（保留端口供未来全局 Trap/异常接入）；
+  2. 在 `hazard_unit.v` 中对正交输出进行严格解耦连续赋值；
+  3. `make lint` 恢复至 4 个顶层全部 0 Warning。
+- **教训**：在 5 级流水线设计中，必须严格区分“当前级的操作数计算状态”与“相邻级的级间寄存器控制信号”；握手忙信号（`busy`）宜尽量由本级触发器（FF）状态纯组合生成，严禁让它穿过控制中枢后又折返作为自身输入的直通组合项。
+
+---
+
+### RV32I vs RV32IM 实测性能对比 (CoreMark 2K Performance Run)
+
+将 `Makefile` 编译选项从 `-march=rv32i_zicsr` 升级为 **`-march=rv32im_zicsr`** 后，软乘除法函数全部替换为单条硬件 `mul`/`div`/`rem` 指令：
+
+| 性能评测指标 | 纯 RV32I (软件模拟乘除) | RV32IM (硬件乘除加速) | 提升幅度 / 变动分析 |
+|:---|:---:|:---:|:---:|
+| **CoreMark 标准得分** | **0.958 CoreMark/MHz** | **2.533 CoreMark/MHz** | **+164.4% (性能提升 2.644 倍！)** |
+| **Benchmark 运行周期 (Total Ticks)** | 2,086,119 cycles | **789,387 cycles** | **耗时减少 62.16% (快了 2.64 倍)** |
+| **程序执行总周期数 (Total Cycles)** | 2,357,625 cycles | **1,055,178 cycles** | **总周期大幅缩减 55.24%** |
+| **总退休指令数 (Retired Instructions)** | 1,565,641 insts | **691,182 insts** | **指令数减少 55.85% (消除 87.4 万条软运算开销)** |
+| **平均 CPI** | 1.51 | **1.53** | 乘法仅停顿 1 拍，除法 32 拍，平均 CPI 保持在极佳水准 |
+| **ELF 代码尺寸 (`coremark.elf`)** | 21,884 bytes (21.4 KB) | **18,348 bytes (17.9 KB)** | **固件尺寸缩减 16.16% (节省 3.5 KB 代码空间)** |
+| **板级固件尺寸 (`coremark_board.bin`)** | 20,444 bytes | **17,560 bytes** | **SRAM 占用减少，余量更加充裕** |
+| **C 语言综合运行时测试 (`make test-c`)** | 16,438 insts / 34,314 cycles | **14,118 insts / 33,334 cycles** | 软乘除库开销消除，全功能核验 100% PASS |
+| **官方 ISA 测试 (`make isa-test`)** | 38/38 PASS | **38/38 PASS** | 保持基础指令集 100% 后向兼容 |
+| **Spike 差分验证 (`make difftest`)** | 38/38 MATCH | **38/38 MATCH** | 与 Spike Golden Model 逐条一致 |
