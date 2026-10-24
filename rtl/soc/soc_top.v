@@ -119,6 +119,16 @@ module soc_top #(
     wire [31:0] wbs2_dat_r;
     wire        wbs2_ack;
 
+    // Slave 3: MAC Accelerator
+    wire        wbs3_cyc;
+    wire        wbs3_stb;
+    wire        wbs3_we;
+    wire [31:0] wbs3_adr;
+    wire [31:0] wbs3_dat_w;
+    wire [3:0]  wbs3_sel;
+    wire [31:0] wbs3_dat_r;
+    wire        wbs3_ack;
+
     // =========================================================================
     // 3. 例化 Core-to-Wishbone 主机桥
     // =========================================================================
@@ -183,7 +193,17 @@ module soc_top #(
         .wbs2_dat_o(wbs2_dat_w),
         .wbs2_sel_o(wbs2_sel),
         .wbs2_dat_i(wbs2_dat_r),
-        .wbs2_ack_i(wbs2_ack)
+        .wbs2_ack_i(wbs2_ack),
+
+        // Slave 3: MAC Accelerator
+        .wbs3_cyc_o(wbs3_cyc),
+        .wbs3_stb_o(wbs3_stb),
+        .wbs3_we_o (wbs3_we),
+        .wbs3_adr_o(wbs3_adr),
+        .wbs3_dat_o(wbs3_dat_w),
+        .wbs3_sel_o(wbs3_sel),
+        .wbs3_dat_i(wbs3_dat_r),
+        .wbs3_ack_i(wbs3_ack)
     );
 
     // =========================================================================
@@ -247,6 +267,22 @@ module soc_top #(
         .wbs_dat_o(wbs2_dat_r),
         .wbs_ack_o(wbs2_ack),
         .timer_irq(timer_irq)
+    );
+
+    // =========================================================================
+    // 7b. 例化 4 路并行 SIMD INT8 算子加速器 (0x2000_0000)
+    // =========================================================================
+    wb_mac_acc u_mac_acc (
+        .clk      (clk),
+        .rst_n    (rst_n),
+        .wbs_cyc_i(wbs3_cyc),
+        .wbs_stb_i(wbs3_stb),
+        .wbs_we_i (wbs3_we),
+        .wbs_adr_i(wbs3_adr),
+        .wbs_sel_i(wbs3_sel),
+        .wbs_dat_i(wbs3_dat_w),
+        .wbs_dat_o(wbs3_dat_r),
+        .wbs_ack_o(wbs3_ack)
     );
 
     // =========================================================================

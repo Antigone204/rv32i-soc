@@ -1,15 +1,16 @@
-# Radiant Heisenberg: RV32I Processor & Parallel Accelerated SoC
+# Radiant Heisenberg: RV32IM Processor & Parallel Accelerated SoC
 
 [![Language: Verilog-2001](https://img.shields.io/badge/Language-Verilog--2001-blue.svg)](#)
-[![ISA: RV32I](https://img.shields.io/badge/ISA-RV32I%20(Zicsr%20ready)-orange.svg)](#)
+[![ISA: RV32IM](https://img.shields.io/badge/ISA-RV32IM%20(Zicsr%20ready)-orange.svg)](#)
 [![Lint: Verilator 0W](https://img.shields.io/badge/Verilator%20Lint-0%20Warnings-brightgreen.svg)](#)
 [![ISA Tests: 38/38 PASS](https://img.shields.io/badge/ISA%20Tests-38%2F38%20PASS-brightgreen.svg)](#)
 [![DiffTest: Spike 100%](https://img.shields.io/badge/DiffTest-Spike%20100%25%20Match-brightgreen.svg)](#)
-[![CoreMark: 0.958/MHz](https://img.shields.io/badge/CoreMark%2FMHz-0.958%20(CPI%201.51)-brightgreen.svg)](#)
+[![CoreMark: 3.025/MHz](https://img.shields.io/badge/CoreMark%2FMHz-3.025%20(CPI%201.22)-brightgreen.svg)](#)
+[![SIMD MAC: 24.98x](https://img.shields.io/badge/INT8%20GEMV%20Speedup-24.98x-blueviolet.svg)](#)
 [![Target: Pango Logos-2](https://img.shields.io/badge/Target%20FPGA-Pango%20Logos--2%20PG2L200H-purple.svg)](#)
 
-> **2026 全国大学生嵌入式芯片与系统设计竞赛 · 紫光同创企业赛道 · 选题一**  
-> 目标硬件：远程 FPGA 平台 · 盘古 MES2L676-200HP 开发板（紫光同创 Logos-2 PG2L200H，板载双片 1 GB DDR3，摄像头与外设接口）
+> **2026 全国大学生嵌入式芯片与系统设计竞赛 · 紫光同创企业赛道 · 选题一（RISC-V 并行加速系统）**  
+> 目标硬件：远程 FPGA 实验平台 · **盘古 200K-MINI 开发板**（紫光同创 Logos-2 `PG2L200H-6FBB676`，核心板晶振 27 MHz）
 
 ---
 
@@ -38,11 +39,11 @@
 | **阶段 0<br>(Core)** | • 经典 5 级静态流水线（IF / ID / EX / MEM / WB）<br>• 全通路数据前推网络（EX-EX, MEM-EX, 内部直通 RegFile）<br>• 完整冒险控制（Load-Use 1 拍停顿、SW→LW 结构冒险停顿、停顿前推锁存）<br>• BRAM 同步读时序适配（提前发出取指与 Load 读地址） | • Verilator `-Wall` 0 警告<br>• 38/38 项官方 `rv32ui` 测试 100% PASS<br>• Spike DiffTest 38/38 逐指令 100% MATCH<br>• 加权平均 CPI = **1.116** | ✅ 已完成 |
 | **阶段 S1a & S1b<br>(Minimal SoC)** | • **Wishbone B4 固定 1 拍同步子集总线**（Classic 周期，解耦无等待）<br>• 1-Master 4-Slave 互联交叉译码器（支持未映射空间单拍虚拟 ACK）<br>• 64KB 双端口片上 SRAM（Port A 零等待直连取指，Port B 挂载 Wishbone 数据总线）<br>• SiFive FE310 兼容 UART0（含 8 字节收发双 FIFO 与流控）<br>• RISC-V 标准 64 位单调递增 CLINT 定时器（`mtime` / `mtimecmp`） | • 9/9 单元模块全部 PASS<br>• SoC 顶层软硬件集成自检 `test_soc.S` PASS<br>• `Cycles: 233, Insts: 128, CPI: 1.82` | ✅ 已完成 |
 | **阶段 S1c<br>(C Runtime)** | • 零 OS 依赖的裸机 C 运行时环境（Freestanding Runtime）<br>• 链接脚本 `link.ld`（规范排布 64KB 物理空间与栈顶）<br>• 启动汇编 `crt0.S`（寄存器清零、BSS 清零、`SIM_CTRL` 上报）<br>• 驱动与库函数：`soc.h`, `uart.h/c` (轻量 `printf`), `timer.h/c` (64 位原子防撕裂读取), `str.h/c`<br>• GCC 软乘除法库 `libgcc`（`__mulsi3`, `__divsi3`, `__udivsi3`）链接支持 | • `make test-c` 综合验收测试 PASS<br>• 覆盖递归调用 (`fib(10)=55`)、软乘除法与长字符串打印<br>• `Cycles: 34314, Insts: 16438, CPI: 2.09` | ✅ 已完成 |
-| **阶段 S1d<br>(CoreMark)** | • 导入业界标准 EEMBC CoreMark 权威算法套件<br>• 定制底层适配移植层 `core_portme.c/h`（静态内存分配，无浮点依赖）<br>• 运行 2K Performance Run 严苛校验集（`seedcrc=0xe9f5`）<br>• 定点化计算与标准分值输出 | • `Correct operation validated.` 校验通过<br>• 特征 CRC 匹配（`crcfinal=0x72be`）<br>• **基线得分：`0.958 CoreMark/MHz`**<br>• 硬件实时 Profiling：CPI = **1.51** | ✅ 已完成 |
-| **Checkpoint 1<br>(Board Bring-up)** | • 紫光同创 Pango Design Suite (PDS) 工程建立<br>• 板级顶层封装、时钟 PLL (50MHz) 与引脚约束 (`.fdc`)<br>• 远程开发板 MES2L676 烧录与物理串口通信验证 | • 综合实现无时序违例<br>• 物理 UART 打印 CoreMark 分数看板 | 🔜 进行中 |
-| **阶段 S2<br>(Privilege & IRQ)** | • RISC-V 机器模式 CSR 寄存器组（`mstatus`, `mie`, `mtvec`, `mepc`, `mcause`, `mip` 等）<br>• 精确异常与中断响应/恢复状态机（`ecall`, `ebreak`, `mret`）<br>• CLINT 定时器中断接入 | • 官方特权级指令集回归测试<br>• 定时器周期中断抢占验证 | 📅 规划中 |
-| **阶段 S3<br>(Perf Upgrades)** | • 硬件 M 扩展多周期/流水化乘除法器（替换软乘除库）<br>• IF 级 BTB + 2-bit 饱和计数器 BHT 动态分支预测器<br>• 指令 Cache 与数据 Cache（Wishbone Pipelined 协议升级）<br>• DDR3 外部大容量存储器接入（1 GB） | • CoreMark 分数预期提升至 **1.8+ CoreMark/MHz**<br>• 运行大型应用程序与神经网络权重存储 | 📅 规划中 |
-| **阶段 S4<br>(Accelerator)** | • 硬件并行矩阵/卷积张量算子加速器（Dedicated Coprocessor / DMA）<br>• PyTorch 算法定点量化、权重导出与算子调度驱动<br>• 摄像头图像实时采集与前向推理演示 | • 竞赛选题端到端系统功能演示与性能评估 | 📅 规划中 |
+| **阶段 S1d<br>(CoreMark 基线)** | • 导入业界标准 EEMBC CoreMark 权威算法套件<br>• 定制底层适配移植层 `core_portme.c/h`（静态内存分配，无浮点依赖）<br>• 运行 2K Performance Run 严苛校验集（`seedcrc=0xe9f5`） | • `Correct operation validated.` 校验通过<br>• 特征 CRC 匹配（`crcfinal=0x72be`）<br>• **纯 RV32I 基线：`0.958 CoreMark/MHz`** (CPI 1.51) | ✅ 已完成 |
+| **阶段 M1<br>(RV32M 硬件乘除)** | • 33×33 符号扩展单周期/打一拍硬件乘法器 (`MUL/MULH/MULHSU/MULHU`)<br>• 32 拍恢复余数试商除法器 + 除零/溢出 1 拍快速旁路 (`DIV/DIVU/REM/REMU`)<br>• 配套方案对比讲义 [`docs/spec/m_ext.md`](docs/spec/m_ext.md) | • 消除 87.4 万条软乘除循环指令<br>• **CoreMark 跃升至 `2.533 CoreMark/MHz` (+164.4%)**<br>• 100% 通过 ISA 与 Spike DiffTest | ✅ 已完成 |
+| **阶段 P1<br>(动态分支预测)** | • IF 级 64 项直接映射 BTB + 2-bit 饱和计数器 BHT (`rtl/core/bpu.v`)<br>• Taken-only 动态表项分配 + 无条件跳转标识 `btb_uncond`<br>• 预测随流水级前传、EX 级精确纠偏，实现 **0 气泡跳转**<br>• 配套方案对比讲义 [`docs/spec/bpu.md`](docs/spec/bpu.md) | • **CoreMark 突破 `3.025 CoreMark/MHz` (+215.8% vs 基线)**<br>• **整机 CPI 从 1.53 降至 `1.22`**<br>• 消除 80%+ 分支冲刷气泡 | ✅ 已完成 |
+| **阶段 A1<br>(并行算子加速)** | • Wishbone 4 路并行 SIMD INT8 乘累加器 (`rtl/acc/wb_mac_acc.v`, `0x2000_0000`)<br>• 隐式写触发 (`ACC_OPB_TRIG`) + 偏置预载 + 硬件零延迟 ReLU 激活读端口<br>• 配套方案对比讲义 [`docs/spec/acc.md`](docs/spec/acc.md) | • $16\times 64$ INT8 全连接层 (1024 MACs + Bias + ReLU) 100% 吻合<br>• **相对软乘基线加速 `24.98x`** (`63,377` → `2,537` 周期)<br>• **相对 RV32IM 标量加速 `3.31x`** | ✅ 已完成 |
+| **阶段 B1<br>(FPGA 板级适配)** | • 盘古 200K-MINI (`PG2L200H-6FBB676`, 27 MHz) 管脚约束与顶层 `fpga_top.v`<br>• BRAM 预置固件 `firmware_words.hex` 自动生成 (`make fpga-fw`) | • `make lint` 覆盖 `fpga_top` 0 警告<br>• 待 PDS License 就绪后综合烧录 | 🔜 待上板 |
 
 ---
 
@@ -84,7 +85,7 @@
 | `0x0000_0000` | `0x0000_FFFF` | 64 KB | **片上双端口 SRAM** | R / W / X | 存放指令代码与数据（Code + Data），CPU 复位向量为 `0x0000_0000` |
 | `0x0200_0000` | `0x0200_FFFF` | 64 KB 区域 | **CLINT (Core-Local Interruptor)** | R / W | RISC-V 标准 64 位单调递增时钟 `mtime` (`0xBFF8`) 与 `mtimecmp` (`0x4000`) |
 | `0x1001_0000` | `0x1001_001F` | 32 B | **UART0 串口控制器** | R / W | SiFive FE310 寄存器布局，含 8 字节收发 FIFO 与硬件流控轮询标志 |
-| `0x8000_0000` | `0xBFFF_FFFF` | 1 GB | **外部 DDR3 (预留)** | R / W | 阶段 S3 扩展接入外部板载 DDR3 存储器 |
+| `0x2000_0000` | `0x2000_001F` | 32 B | **SIMD INT8 MAC 算子加速器 (`wb_mac_acc`)** | R / W | 4 路并行有符号 INT8 乘累加 + 偏置预载 + 隐式写触发 + 硬件零延迟 ReLU |
 | `0xFFFF_FFF0` | `0xFFFF_FFFF` | 16 B | **SIM_CTRL (仿真专用信箱)** | W | 独立于 SRAM 物理空间的仿真退出信箱（未映射区域由总线返回单拍虚拟 ACK） |
 
 ---
@@ -143,7 +144,11 @@
 └── AGENTS.md                   # AI 协作开发准则与亲手档位规范
 ```
 
+- 全系统零基础到精通精读手册：[`docs/study_guide.md`](docs/study_guide.md)
 - 核心微架构规格请查阅：[`docs/spec/core.md`](docs/spec/core.md)
+- RV32M 硬件乘除法单元规格与方案对比：[`docs/spec/m_ext.md`](docs/spec/m_ext.md)
+- 动态分支预测器（BTB+BHT）规格与方案对比：[`docs/spec/bpu.md`](docs/spec/bpu.md)
+- 并行 SIMD INT8 算子加速器规格与方案对比：[`docs/spec/acc.md`](docs/spec/acc.md)
 - SoC 总线与外设规格请查阅：[`docs/spec/soc.md`](docs/spec/soc.md)
 - 详细开发演进与 Bug 排查记录请查阅：[`docs/journal.md`](docs/journal.md)
 

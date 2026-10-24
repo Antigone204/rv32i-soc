@@ -50,6 +50,16 @@ module tb_wb_interconnect;
     reg  [31:0] wbs2_dat_r = 32'hCCCC_0003;
     reg         wbs2_ack = 1'b0;
 
+    // Slave 3: MAC Accelerator
+    wire        wbs3_cyc;
+    wire        wbs3_stb;
+    wire        wbs3_we;
+    wire [31:0] wbs3_adr;
+    wire [31:0] wbs3_dat_w;
+    wire [3:0]  wbs3_sel;
+    reg  [31:0] wbs3_dat_r = 32'hDDDD_0004;
+    reg         wbs3_ack = 1'b0;
+
     wb_interconnect u_dut (
         .clk       (clk),
         .rst_n     (rst_n),
@@ -87,7 +97,16 @@ module tb_wb_interconnect;
         .wbs2_dat_o(wbs2_dat_w),
         .wbs2_sel_o(wbs2_sel),
         .wbs2_dat_i(wbs2_dat_r),
-        .wbs2_ack_i(wbs2_ack)
+        .wbs2_ack_i(wbs2_ack),
+
+        .wbs3_cyc_o(wbs3_cyc),
+        .wbs3_stb_o(wbs3_stb),
+        .wbs3_we_o (wbs3_we),
+        .wbs3_adr_o(wbs3_adr),
+        .wbs3_dat_o(wbs3_dat_w),
+        .wbs3_sel_o(wbs3_sel),
+        .wbs3_dat_i(wbs3_dat_r),
+        .wbs3_ack_i(wbs3_ack)
     );
 
     // Mock slave ack generation (匹配真实从设备: ack <= cyc & stb)
@@ -96,10 +115,12 @@ module tb_wb_interconnect;
             wbs0_ack <= 1'b0;
             wbs1_ack <= 1'b0;
             wbs2_ack <= 1'b0;
+            wbs3_ack <= 1'b0;
         end else begin
             wbs0_ack <= wbs0_cyc & wbs0_stb;
             wbs1_ack <= wbs1_cyc & wbs1_stb;
             wbs2_ack <= wbs2_cyc & wbs2_stb;
+            wbs3_ack <= wbs3_cyc & wbs3_stb;
         end
     end
 

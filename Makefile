@@ -8,24 +8,25 @@ CROSS       := $(GCC_DIR)/riscv-none-elf-
 
 RTL_CORE    := rtl/core/core.v rtl/core/alu.v rtl/core/regfile.v rtl/core/imm_gen.v \
                rtl/core/decoder.v rtl/core/forwarding_unit.v rtl/core/hazard_unit.v \
-               rtl/core/muldiv.v
+               rtl/core/muldiv.v rtl/core/bpu.v
 RTL_SOC     := rtl/soc/uart_tx.v rtl/soc/uart_rx.v rtl/soc/wb_core_bridge.v \
                rtl/soc/wb_interconnect.v rtl/soc/wb_sram.v rtl/soc/wb_uart.v \
-               rtl/soc/wb_clint.v rtl/soc/soc_top.v
+               rtl/soc/wb_clint.v rtl/acc/wb_mac_acc.v rtl/soc/soc_top.v
 SMOKE_SRCS  := rtl/soc/uart_tx.v rtl/soc/uart_rx.v platform/pango/smoke_top.v
 FPGA_SRCS   := platform/pango/fpga_top.v $(RTL_SOC) $(RTL_CORE)
 
-.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-muldiv test-wb-interconnect test-wb-uart test-wb-clint test-soc test-c coremark fpga-fw unit-test isa-test difftest toolcheck clean
+.PHONY: help lint smoke-sim test-core test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-muldiv test-bpu test-wb-interconnect test-wb-uart test-wb-clint test-wb-mac-acc test-soc test-c test-acc coremark fpga-fw unit-test isa-test difftest toolcheck clean
 
 help:
 	@echo "make toolcheck    - 检查本地工具链"
 	@echo "make lint         - Verilator lint（零警告检查）"
 	@echo "make fpga-fw      - 编译板级 CoreMark 固件并生成 platform/pango/firmware_words.hex"
-	@echo "make unit-test    - 运行全部单元测试（含 ALU/译码/前推/冒险/Wishbone/UART/CLINT）"
+	@echo "make unit-test    - 运行全部单元测试（含 ALU/译码/前推/冒险/乘除/BPU/Wishbone/UART/CLINT/ACC）"
 	@echo "make test-core    - 运行 5 级流水线集成自检测试"
 	@echo "make test-soc     - 运行 SoC 顶层软硬件集成冒烟测试 (SRAM/UART/CLINT)"
 	@echo "make test-c       - 运行 S1c 裸机 C 语言运行时综合验收测试"
-	@echo "make coremark     - 运行 EEMBC CoreMark 纯 RV32I 性能基线测试"
+	@echo "make test-acc     - 运行 A1 并行 SIMD INT8 算子加速器性能基准测试"
+	@echo "make coremark     - 运行 EEMBC CoreMark 性能基准测试"
 	@echo "make isa-test     - 运行官方 RV32UI 全套自动化指令集测试"
 	@echo "make difftest     - 运行与 Spike 的差分比对验证"
 	@echo "make smoke-sim    - 平台冒烟测试的仿真（UART banner + 回显）"
@@ -40,8 +41,8 @@ toolcheck:
 lint:
 	verilator --lint-only -Wall --top-module smoke_top $(SMOKE_SRCS)
 	verilator --lint-only -Wall -Irtl/core --top-module core $(RTL_CORE)
-	verilator --lint-only -Wall -Irtl/core -Irtl/soc --top-module soc_top $(RTL_SOC) $(RTL_CORE)
-	verilator --lint-only -Wall -Irtl/core -Irtl/soc --top-module fpga_top $(FPGA_SRCS)
+	verilator --lint-only -Wall -Irtl/core -Irtl/soc -Irtl/acc --top-module soc_top $(RTL_SOC) $(RTL_CORE)
+	verilator --lint-only -Wall -Irtl/core -Irtl/soc -Irtl/acc --top-module fpga_top $(FPGA_SRCS)
 
 test-alu:
 	@mkdir -p $(BUILD)
@@ -85,6 +86,12 @@ test-muldiv:
 	vvp -n $(BUILD)/tb_muldiv.vvp | tee $(BUILD)/test_muldiv.log
 	@grep -q "ALL MULDIV TESTS PASSED" $(BUILD)/test_muldiv.log
 
+test-bpu:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -Irtl/core -o $(BUILD)/tb_bpu.vvp sim/unit/tb_bpu.v rtl/core/bpu.v
+	vvp -n $(BUILD)/tb_bpu.vvp | tee $(BUILD)/test_bpu.log
+	@grep -q "ALL BPU TESTS PASSED" $(BUILD)/test_bpu.log
+
 test-wb-interconnect:
 	@mkdir -p $(BUILD)
 	iverilog -g2012 -o $(BUILD)/tb_wb_interconnect.vvp sim/unit/tb_wb_interconnect.v rtl/soc/wb_interconnect.v
@@ -103,8 +110,14 @@ test-wb-clint:
 	vvp -n $(BUILD)/tb_wb_clint.vvp | tee $(BUILD)/test_wb_clint.log
 	@grep -q "ALL WB_CLINT TESTS PASSED" $(BUILD)/test_wb_clint.log
 
-unit-test: test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-muldiv \
-           test-wb-interconnect test-wb-uart test-wb-clint
+test-wb-mac-acc:
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -o $(BUILD)/tb_wb_mac_acc.vvp sim/unit/tb_wb_mac_acc.v rtl/acc/wb_mac_acc.v
+	vvp -n $(BUILD)/tb_wb_mac_acc.vvp | tee $(BUILD)/test_wb_mac_acc.log
+	@grep -q "ALL WB_MAC_ACC TESTS PASSED" $(BUILD)/test_wb_mac_acc.log
+
+unit-test: test-alu test-regfile test-immgen test-decoder test-forwarding test-hazard test-muldiv test-bpu \
+           test-wb-interconnect test-wb-uart test-wb-clint test-wb-mac-acc
 
 $(BUILD)/test_soc.hex: sim/soc/test_soc.S sim/isa/env/link.ld
 	@mkdir -p $(BUILD)
@@ -126,10 +139,22 @@ $(BUILD)/test_c.hex: $(SW_COMMON_SRCS) sw/test_c/main.c sw/common/link.ld sw/com
 
 test-c: $(BUILD)/test_c.hex
 	@mkdir -p $(BUILD)
-	iverilog -g2012 -Irtl/core -Irtl/soc -o $(BUILD)/tb_soc.vvp sim/soc/tb_soc.v $(RTL_SOC) $(RTL_CORE)
+	iverilog -g2012 -Irtl/core -Irtl/soc -Irtl/acc -o $(BUILD)/tb_soc.vvp sim/soc/tb_soc.v $(RTL_SOC) $(RTL_CORE)
 	vvp -n $(BUILD)/tb_soc.vvp +HEX=$< +TIMEOUT=200000 | tee $(BUILD)/test_c.log
 	@grep -q "\[S1c\] C Runtime OK! fib=55 mul=-69104 div=-2702 hex=0x00123456" $(BUILD)/test_c.log
 	@grep -q "SOC VERIFICATION PASSED" $(BUILD)/test_c.log
+
+$(BUILD)/test_acc.hex: $(SW_COMMON_SRCS) sw/test_acc/main.c sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/common/str.h
+	@mkdir -p $(BUILD)
+	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -Wall -Wextra -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/test_acc/main.c -lgcc -o $(BUILD)/test_acc.elf
+	$(CROSS)objcopy -O verilog $(BUILD)/test_acc.elf $@
+
+test-acc: $(BUILD)/test_acc.hex
+	@mkdir -p $(BUILD)
+	iverilog -g2012 -Irtl/core -Irtl/soc -Irtl/acc -o $(BUILD)/tb_soc.vvp sim/soc/tb_soc.v $(RTL_SOC) $(RTL_CORE)
+	vvp -n $(BUILD)/tb_soc.vvp +HEX=$< +TIMEOUT=500000 | tee $(BUILD)/test_acc.log
+	@grep -q "ACCELERATOR VERIFICATION PASSED" $(BUILD)/test_acc.log
+	@grep -q "SOC VERIFICATION PASSED" $(BUILD)/test_acc.log
 
 COREMARK_SRCS  := $(wildcard sw/coremark/*.c)
 

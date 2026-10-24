@@ -11,6 +11,7 @@
 
 #define CLINT_BASE          0x02000000UL
 #define UART0_BASE          0x10010000UL
+#define ACC0_BASE           0x20000000UL
 #define SIM_CTRL_ADDR       0xFFFFFFF0UL
 
 #define REG32(addr)         (*(volatile uint32_t *)(uintptr_t)(addr))

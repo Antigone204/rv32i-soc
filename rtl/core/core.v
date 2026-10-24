@@ -56,8 +56,13 @@ module core (
     wire structural_hazard;
 
     // 分支与跳转信号 (在 EX 级生成)
+    reg  [31:0] id_ex_pc;
     wire        branch_taken;
     wire [31:0] branch_target;
+    wire        ex_bp_miss;
+    wire [31:0] ex_correct_pc;
+    wire        ex_is_ctrl;
+    wire        ex_is_uncond;
 
     // 前推控制信号
     wire [1:0] forward_a;
@@ -68,7 +73,28 @@ module core (
     // =========================================================================
     reg  [31:0] if_pc;
     wire [31:0] if_pc_plus_4 = if_pc + 32'd4;
-    wire [31:0] if_next_pc   = (branch_taken) ? branch_target : if_pc_plus_4;
+    wire        if_pred_taken;
+    wire [31:0] if_pred_target;
+
+    wire [31:0] if_next_pc = (ex_bp_miss)    ? ex_correct_pc :
+                             (if_pred_taken) ? if_pred_target :
+                             if_pc_plus_4;
+
+    // 动态分支预测器 (Direct-Mapped BTB + 2-bit BHT)
+    bpu #(
+        .INDEX_BITS(6)
+    ) u_bpu (
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .if_pc_i        (if_pc),
+        .pred_taken_o   (if_pred_taken),
+        .pred_target_o  (if_pred_target),
+        .upd_valid_i    (ex_is_ctrl & !stall_id_ex),
+        .upd_pc_i       (id_ex_pc),
+        .upd_is_uncond_i(ex_is_uncond),
+        .upd_taken_i    (branch_taken),
+        .upd_target_i   (branch_target)
+    );
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -88,16 +114,22 @@ module core (
     reg [31:0] if_id_pc;
     reg [31:0] if_id_inst;
     reg        if_id_valid;
+    reg        if_id_pred_taken;
+    reg [31:0] if_id_pred_target;
 
     always @(posedge clk) begin
         if (!rst_n || flush_if_id) begin
-            if_id_pc    <= 32'd0;
-            if_id_inst  <= 32'h0000_0013; // 注入 NOP (addi x0, x0, 0)
-            if_id_valid <= 1'b0;
+            if_id_pc          <= 32'd0;
+            if_id_inst        <= 32'h0000_0013; // 注入 NOP (addi x0, x0, 0)
+            if_id_valid       <= 1'b0;
+            if_id_pred_taken  <= 1'b0;
+            if_id_pred_target <= 32'd0;
         end else if (!stall_if_id) begin
-            if_id_pc    <= if_pc;
-            if_id_inst  <= imem_rdata;
-            if_id_valid <= 1'b1;
+            if_id_pc          <= if_pc;
+            if_id_inst        <= imem_rdata;
+            if_id_valid       <= 1'b1;
+            if_id_pred_taken  <= if_pred_taken;
+            if_id_pred_target <= if_pred_target;
         end
     end
 
@@ -178,7 +210,6 @@ module core (
     );
 
     // ---------------- 级间寄存器 2: ID/EX ----------------
-    reg [31:0] id_ex_pc;
     reg [31:0] id_ex_rs1_data;
     reg [31:0] id_ex_rs2_data;
     reg [31:0] id_ex_imm;
@@ -198,6 +229,8 @@ module core (
     reg        id_ex_jalr;
     reg        id_ex_valid;
     reg        id_ex_muldiv_en;
+    reg        id_ex_pred_taken;
+    reg [31:0] id_ex_pred_target;
 
     // 前推多路选择器输出声明 (供 ID/EX 停顿锁存及 EX 计算使用)
     reg [31:0] ex_fwd_val_a;
@@ -225,6 +258,8 @@ module core (
             id_ex_jalr       <= 1'b0;
             id_ex_valid      <= 1'b0;
             id_ex_muldiv_en  <= 1'b0;
+            id_ex_pred_taken <= 1'b0;
+            id_ex_pred_target<= 32'd0;
         end else if (stall_id_ex) begin
             // BUG-003: 停顿期间锁存当拍前推结果，防止前推源在后续周期写回后离开流水线导致操作数丢失
             id_ex_rs1_data   <= ex_fwd_val_a;
@@ -250,6 +285,8 @@ module core (
             id_ex_jalr       <= id_jalr;
             id_ex_valid      <= if_id_valid;
             id_ex_muldiv_en  <= id_muldiv_en;
+            id_ex_pred_taken <= if_id_pred_taken;
+            id_ex_pred_target<= if_id_pred_target;
         end
     end
 
@@ -331,6 +368,10 @@ module core (
         endcase
     end
 
+    // 分支/跳转控制与误预测裁决逻辑
+    assign ex_is_ctrl   = id_ex_valid & (id_ex_branch | id_ex_jal | id_ex_jalr);
+    assign ex_is_uncond = id_ex_jal | id_ex_jalr;
+
     // 跳转有效与目标计算 (受 id_ex_valid 门控)
     assign branch_taken = id_ex_valid & ((id_ex_branch & ex_br_cond) | id_ex_jal | id_ex_jalr);
 
@@ -338,6 +379,12 @@ module core (
     assign branch_target     = (id_ex_jalr) ?
                                 ((ex_jump_base + id_ex_imm) & ~32'd1) :
                                 (ex_jump_base + id_ex_imm);
+
+    assign ex_correct_pc = branch_taken ? branch_target : (id_ex_pc + 32'd4);
+    assign ex_bp_miss    = id_ex_valid & (
+        (branch_taken != id_ex_pred_taken) |
+        (branch_taken & (id_ex_pred_target != branch_target))
+    );
 
     // ---------------- 级间寄存器 3: EX/MEM ----------------
     reg [31:0] ex_mem_pc;
@@ -533,9 +580,9 @@ module core (
         .id_ex_rd         (id_ex_rd),
         .ex_mem_mem_write (ex_mem_valid & ex_mem_mem_write),
         .ex_muldiv_busy   (ex_muldiv_busy),
-        .branch_taken     (branch_taken),
-        .jal              (id_ex_valid & id_ex_jal),
-        .jalr             (id_ex_valid & id_ex_jalr),
+        .branch_taken     (ex_bp_miss),
+        .jal              (1'b0),
+        .jalr             (1'b0),
         .stall_pc         (stall_pc),
         .stall_if_id      (stall_if_id),
         .stall_id_ex      (stall_id_ex),
