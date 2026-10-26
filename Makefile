@@ -27,7 +27,7 @@ help:
 	@echo "make test-c       - 运行 S1c 裸机 C 语言运行时综合验收测试"
 	@echo "make test-acc     - 运行 A1 并行 SIMD INT8 算子加速器性能基准测试"
 	@echo "make coremark     - 运行 EEMBC CoreMark 性能基准测试"
-	@echo "make isa-test     - 运行官方 RV32UI 全套自动化指令集测试"
+	@echo "make isa-test     - 运行官方 RV32UI + RV32UM 全套自动化指令集测试"
 	@echo "make difftest     - 运行与 Spike 的差分比对验证"
 	@echo "make smoke-sim    - 平台冒烟测试的仿真（UART banner + 回显）"
 	@echo "make clean        - 清理 build/"

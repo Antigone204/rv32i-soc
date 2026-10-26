@@ -99,6 +99,14 @@ def parse_spike_trace(log_path):
     return commits
 
 
+TEST_SUITES = ("rv32ui", "rv32um")
+
+
+def isa_for(name):
+    """rv32ui 对标纯 RV32I 的 Spike，rv32um 对标 RV32IM"""
+    return "rv32im" if name.startswith("rv32um-") else "rv32i"
+
+
 def run_diff_for_test(test_name, verbose=False):
     """运行单项测试并执行差分比对"""
     elf_path = os.path.join(BUILD_ISA, f"{test_name}.elf")
@@ -124,7 +132,7 @@ def run_diff_for_test(test_name, verbose=False):
 
         cmd_spike = [
             SPIKE_BIN,
-            "--isa=rv32i",
+            f"--isa={isa_for(test_name)}",
             "--pc=0x80000000",
             "--instructions=20000",
             "--log-commits",
@@ -186,23 +194,23 @@ def run_diff_for_test(test_name, verbose=False):
 
 def main():
     parser = argparse.ArgumentParser(description="DiffTest Core vs Spike")
-    parser.add_argument("test", nargs="?", default=None, help="Specific test name (e.g. add or rv32ui-p-add)")
+    parser.add_argument("test", nargs="?", default=None, help="Specific test name (e.g. add, mul, rv32ui-p-add, rv32um-p-mul)")
     args = parser.parse_args()
 
     if not os.path.exists(TB_VVP):
         print(f"[ERROR] Testbench binary {TB_VVP} not found!")
         sys.exit(1)
 
-    elf_files = sorted(glob.glob(os.path.join(BUILD_ISA, "rv32ui-p-*.elf")))
+    elf_files = []
+    for suite in TEST_SUITES:
+        elf_files += sorted(glob.glob(os.path.join(BUILD_ISA, f"{suite}-p-*.elf")))
     if not elf_files:
         print("[ERROR] No compiled ELFs found! Run 'make isa-test' first.")
         sys.exit(1)
 
     if args.test:
-        target = args.test
-        if not target.startswith("rv32ui-p-"):
-            target = f"rv32ui-p-{target}"
-        elf_files = [f for f in elf_files if os.path.splitext(os.path.basename(f))[0] == target]
+        targets = [args.test] if "-p-" in args.test else [f"{s}-p-{args.test}" for s in TEST_SUITES]
+        elf_files = [f for f in elf_files if os.path.splitext(os.path.basename(f))[0] in targets]
         if not elf_files:
             print(f"[ERROR] Test {args.test} not found!")
             sys.exit(1)

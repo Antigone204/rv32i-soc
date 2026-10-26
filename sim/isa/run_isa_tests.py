@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-run_isa_tests.py — RISC-V 官方 RV32UI 测试集批量执行与汇总脚本
+run_isa_tests.py — RISC-V 官方 RV32UI + RV32UM 测试集批量执行与汇总脚本
 
 功能：
-  1. 编译全部 sim/isa/src/rv32ui-p-*.S 到 build/isa/*.hex
+  1. 编译全部 sim/isa/src/rv32{ui,um}-p-*.S 到 build/isa/*.hex
+     （rv32ui 用 -march=rv32i_zicsr，rv32um 用 -march=rv32im_zicsr）
   2. 调用 vvp 执行 tb_isa.vvp 仿真
   3. 收集并格式化展示每个用例的 PASS / FAIL / TIMEOUT 状态与周期数
   4. 生成总结报告，若有失败则返回非零退出码
@@ -28,11 +29,27 @@ MACROS_DIR = os.path.join(PROJECT_ROOT, "sim/isa/macros")
 TB_VVP = os.path.join(PROJECT_ROOT, "build/tb_isa.vvp")
 
 
+TEST_SUITES = ("rv32ui", "rv32um")
+
+
+def march_for(name):
+    """rv32ui 保持纯 RV32I 编译，rv32um 才开启 M 扩展"""
+    return "rv32im_zicsr" if name.startswith("rv32um-") else "rv32i_zicsr"
+
+
+def resolve_test_name(target):
+    """'add' -> 'rv32ui-p-add'，'mul' -> 'rv32um-p-mul'；完整名原样返回"""
+    if "-p-" in target:
+        return [target]
+    return [f"{suite}-p-{target}" for suite in TEST_SUITES]
+
+
 def compile_test(s_path, elf_path, hex_path):
     """编译汇编源文件生成 ELF 与 Hex"""
+    name = os.path.splitext(os.path.basename(s_path))[0]
     cmd_gcc = [
         CROSS_GCC,
-        "-march=rv32i_zicsr",
+        f"-march={march_for(name)}",
         "-mabi=ilp32",
         "-static",
         "-nostdlib",
@@ -101,8 +118,8 @@ def run_single_test(hex_path, trace_path=None, timeout=25000):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run RISC-V ISA rv32ui tests")
-    parser.add_argument("test", nargs="?", default=None, help="Run specific test (e.g., add or rv32ui-p-add)")
+    parser = argparse.ArgumentParser(description="Run RISC-V ISA rv32ui/rv32um tests")
+    parser.add_argument("test", nargs="?", default=None, help="Run specific test (e.g., add, mul, rv32ui-p-add, rv32um-p-mul)")
     parser.add_argument("--trace", action="store_true", help="Generate commit trace file")
     args = parser.parse_args()
 
@@ -112,16 +129,16 @@ def main():
         print(f"[ERROR] Testbench binary {TB_VVP} not found! Run make first.")
         sys.exit(1)
 
-    s_files = sorted(glob.glob(os.path.join(SRC_DIR, "rv32ui-p-*.S")))
+    s_files = []
+    for suite in TEST_SUITES:
+        s_files += sorted(glob.glob(os.path.join(SRC_DIR, f"{suite}-p-*.S")))
     if not s_files:
         print(f"[ERROR] No test sources found in {SRC_DIR}")
         sys.exit(1)
 
     if args.test:
-        target = args.test
-        if not target.startswith("rv32ui-p-"):
-            target = f"rv32ui-p-{target}"
-        s_files = [f for f in s_files if os.path.splitext(os.path.basename(f))[0] == target]
+        targets = resolve_test_name(args.test)
+        s_files = [f for f in s_files if os.path.splitext(os.path.basename(f))[0] in targets]
         if not s_files:
             print(f"[ERROR] Test {args.test} not found!")
             sys.exit(1)
@@ -132,7 +149,7 @@ def main():
     timeout_count = 0
     results = []
 
-    print(f"=== Starting RV32UI ISA Tests ({total_tests} test cases) ===\n")
+    print(f"=== Starting RV32UI/RV32UM ISA Tests ({total_tests} test cases) ===\n")
     start_time = time.time()
 
     for idx, s_path in enumerate(s_files, 1):
