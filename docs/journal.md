@@ -339,3 +339,100 @@
 | **C 语言综合运行时测试 (`make test-c`)** | 16,438 insts / 34,314 cycles | **14,118 insts / 33,334 cycles** | 软乘除库开销消除，全功能核验 100% PASS |
 | **官方 ISA 测试 (`make isa-test`)** | 38/38 PASS | **38/38 PASS** | 保持基础指令集 100% 后向兼容 |
 | **Spike 差分验证 (`make difftest`)** | 38/38 MATCH | **38/38 MATCH** | 与 Spike Golden Model 逐条一致 |
+
+
+---
+
+## 2026-10-24 动态分支预测器 BPU 实现与 CoreMark 提速验证 (阶段 P1)
+
+> 本条目为 2026-10-26 根据 commit `745171c`、`docs/spec/bpu.md` 与当日回归实测补记。
+
+### 阶段目标与交付物
+
+M1 完成后 CoreMark CPI 为 1.53。EX 级裁决分支、静态 Predict-Not-Taken 的方案中，每次跳转成立都要冲刷 2 拍，这是剩余的主要开销。本阶段在 IF 级加入动态预测，让预测正确的跳转 0 气泡。
+
+1. **规格书与方案对比讲义 (`docs/spec/bpu.md`)**：对比静态预测、1-bit BHT、BTB + 2-bit BHT、Gshare/锦标赛/RAS 四类方案，选定 64 项直接映射 BTB + 2-bit 饱和计数器。
+2. **`rtl/core/bpu.v`（113 行）**：
+   - 64 项直接映射，表项为 Tag + Target + `btb_uncond`，IF 级单拍组合查表给出 `pred_taken_o / pred_target_o`；
+   - **Taken-only 分配**：只有分支实际跳转时才分配表项。条件分支初值为 `2'b10`（弱跳），JAL/JALR 初值为 `2'b11` 并置 `btb_uncond`。
+3. **`core.v` 集成**：
+   - `next_pc` 优先级：EX 纠偏 > IF 预测 > `pc+4`；
+   - 预测结果 `pred_taken / pred_target` 随 `if_id_* → id_ex_*` 前传；
+   - EX 级判定误预测：`(branch_taken != id_ex_pred_taken) | (branch_taken & (id_ex_pred_target != branch_target))`。误预测时冲刷 `IF/ID`、`ID/EX` 并重定向（预测不跳但实际跳 → 跳到目标；预测跳但实际不跳 → 回到 `id_ex_pc + 4`）。
+4. **单元测试 `sim/unit/tb_bpu.v`**：输出 `ALL BPU TESTS PASSED`。
+
+### 关键设计点：停顿期间的重复训练保护
+
+- BPU 的更新使能接成 `upd_valid_i = ex_is_ctrl & !stall_id_ex`。
+- **原因**：乘除法迭代（`ex_muldiv_busy`）或 SW→LW 结构冒险都会冻结 `ID/EX`，分支指令会在 EX 级停留多拍。如果不加门控，同一条分支在每个停顿拍都会训练一次，2-bit 计数器会被单条指令推到饱和。门控之后，每条指令只在离开 EX 的那一拍更新一次。
+- **教训**：任何"在某一级发生时更新状态"的副作用（预测器训练、性能计数、CSR 写），都要问一句"这一级被冻结时会不会重复触发"。
+
+### 实测数据（CoreMark 2K，ITERATIONS=2，仿真）
+
+| 指标 | M1（静态不跳） | P1（BTB + BHT） | 变化 |
+|:---|:---:|:---:|:---:|
+| CoreMark/MHz | 2.533 | **3.025** | +19.4% |
+| Total Ticks（计时区间） | 789,387 | 660,991 | -16.3% |
+| 整机 Cycles / Insts | 1,055,178 / 691,182 | 922,895 / 753,719 | 见下方说明 |
+| 整机 CPI | 1.53 | 1.22 | 仅作参考 |
+
+> [!NOTE]
+> 整机统计区间包含 `uart_putc` 等待 TX FIFO 的忙等循环。核变快以后，自旋次数也会跟着变，所以同一个二进制的提交指令数变了（691k → 754k），整机 CPI 也被拉低了。**衡量 BPU 收益应以 CoreMark Ticks / 分数为准**，冲刷次数要等补上 `perf_branch_flush` 计数器后才能精确统计。
+
+---
+
+## 2026-10-24 4 路并行 SIMD INT8 乘累加加速器 (阶段 A1)
+
+> 本条目为 2026-10-26 根据 commit `745171c`、`docs/spec/acc.md` 与当日回归实测补记。
+
+### 阶段目标与交付物
+
+1. **规格书与方案对比讲义 (`docs/spec/acc.md`)**：对比 4 种加速器耦合方式，选定 **MMIO 隐式写触发的 4 路 SIMD INT8 乘累加器**。
+2. **`rtl/acc/wb_mac_acc.v`（134 行）**，挂在 Wishbone 上，地址 `0x2000_0000`：
+   - `ACC_OPA`(0x04) 锁存打包的 4×INT8；写 `ACC_OPB_TRIG`(0x08) 时，**当拍**直接用 `wbs_dat_i` 与 `op_a_reg` 做 4 路有符号乘法和加法树，累加进 `acc_reg`，不需要 START/DONE 握手；
+   - `ACC_RESULT`(0x0C) 可写，用来预置 Bias；`ACC_RELU`(0x10) 组合输出 `acc_reg[31] ? 0 : acc_reg`；`ACC_COUNT`(0x14) 统计 MAC 批次；
+   - 固定 1 拍 ACK，符合现有 Wishbone 子集总线的约定。
+3. **SoC 集成**：`wb_interconnect` 扩展为 1-Master 4-Slave，`soc_top` 实例化加速器，`soc.h` 增加基地址宏。
+4. **测试**：单元测试 `sim/unit/tb_wb_mac_acc.v`；系统级基准 `sw/test_acc/main.c`（`make test-acc`），跑 16×64 INT8 全连接层（1024 MAC + Bias + ReLU），三种实现结果逐一比对。
+
+### 实测数据（`make test-acc`）
+
+| 实现 | 周期 | 相对软件乘 | 相对硬件 MUL |
+|:---|:---:|:---:|:---:|
+| [1] 软件移位加（RV32I） | 63,377 | 1.00× | — |
+| [2] 标量硬件 MUL（RV32IM） | 8,418 | 7.53× | 1.00× |
+| [3] SIMD 加速器（MMIO） | 2,537 | **24.98×** | **3.32×** |
+
+### 教训：加速比必须说清楚基准是谁
+
+- 24.98× 是相对**软件模拟乘法**的结果，其中大头（7.5×）其实来自 M 扩展本身。加速器自身的贡献是**相对硬件 MUL 的 3.32×**，来源包括 4 路并行、打包传输省掉 `lb` 和符号扩展、Bias/ReLU 融合进总线读写。
+- 对外介绍时两个数字一起给，否则一被追问基准就站不住。
+
+---
+
+## 2026-10-26 补齐 RV32M 官方 ISA 测试与 Spike DiffTest 覆盖 (阶段 T5)
+
+### 背景
+
+M1 之后，`make isa-test` / `make difftest` 仍然只跑 `rv32ui`（`-march=rv32i_zicsr`、`spike --isa=rv32i`）。8 条 M 扩展指令只有 `tb_muldiv` 单元测试和 CoreMark 间接覆盖，**没有经过官方测试和 Golden Model 的逐条比对**。
+
+### 做了什么
+
+- 从官方 `riscv-software-src/riscv-tests` 导入 `isa/rv32um/{mul,mulh,mulhsu,mulhu,div,divu,rem,remu}.S`，存为 `sim/isa/src/rv32um-p-*.S`。这 8 个文件本身就是独立的 RV32 版本，直接复用现有的 `env/` 和 `macros/`，无需修改。
+- `run_isa_tests.py`：同时收集 `rv32ui` 和 `rv32um`。按测试集选择 `-march`：rv32ui 保持 `rv32i_zicsr`（继续证明基础 ISA 不依赖 M），rv32um 用 `rv32im_zicsr`。单测参数支持 `add` / `mul` 这样的短名。
+- `spike_diff.py`：rv32ui 对标 `--isa=rv32i`，rv32um 对标 `--isa=rv32im`。
+
+### 结果
+
+- `make isa-test`：**46/46 PASS**；`make difftest`：**46/46 MATCH**。除零（返回 -1 / 被除数）和 $-2^{31}/-1$ 溢出这些边界全部与 Spike 一致。
+- rv32um 测试的 CPI：mul 系列 1.26，div/rem 3.0~3.4（32 拍迭代除法所致）。
+
+### 顺带发现：BPU 让 rv32ui 测试本身慢了 5.4%
+
+- **现象**：rv32ui 的 38 个测试总周期从 P1 之前的 12,604 增加到 13,288（加权 CPI 1.117 → 1.177）。逐个对比后发现：每个 R 型测试 +30 拍，I 型和访存测试 +12 拍，分支测试 +24 拍，无循环的测试（`lui` / `jal` / `simple` 等）+0 拍。
+- **根因**：`test_macros.h` 里的 bypass 测试都是**只执行 2 次的小循环**（`addi x4,x4,1; li x5,2; bne x4,x5,1b`）。
+  - 静态不跳：第 1 次回跳误预测，第 2 次退出预测正确，共 1 次冲刷；
+  - Taken-only 分配 + 初值弱跳 `2'b10`：第 1 次回跳是冷 miss，分配表项；第 2 次退出时 BTB 命中，预测"跳"，又误预测一次，共 2 次冲刷。
+  - 每个循环多 2 拍。R 型测试有 15 个 bypass 循环（+30），I 型有 6 个（+12），完全吻合。
+- **结论**：这不是功能 bug，而是 2-bit BHT 在"短循环 + 冷启动"场景下的固有代价。CoreMark 里的长循环占主导，所以总体仍然 +19%。
+- **教训**：微架构优化要在**真实负载**上评估，ISA 合规测试的 CPI 不能当性能指标。这个现象也可以用来回答面试题"分支预测有没有可能让程序变慢"。

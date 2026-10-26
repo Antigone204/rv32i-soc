@@ -208,10 +208,11 @@ stateDiagram-v2
 | **CPI (Cycles Per Instruction)** | **1.53** | **1.22** | **下降 0.31 (逼近极限 1.0)** |
 | **Total Ticks (定时器节拍)** | 789,387 | 660,991 | **-16.27% (节省 128,396 拍)** |
 | **Total Cycles (执行总周期)** | 1,055,178 | 922,895 | **-12.54% (消除 132,283 拍气泡)** |
-| **架构验证 (ISA Test & DiffTest)** | 38/38 PASS | 38/38 PASS / 100% Spike Match | 零回归，完全保证架构正确性 |
+| **架构验证 (ISA Test & DiffTest)** | 38/38 PASS | 38/38 PASS / 100% Spike Match（后续补 rv32um 后为 46/46） | 零功能回归 |
 
 > [!TIP] 性能总结
-> 仅通过在 IF 级增加 64 项轻量级 BTB 与 2-bit BHT，未牺牲整核关键路径与 Fmax 的前提下，CoreMark 跑分直接跨过 **3.0 CoreMark/MHz** 大关，CPI 从 1.53 骤降至 1.22，消除了 80% 以上的分支冲刷气泡！
+> 仅通过在 IF 级增加 64 项轻量级 BTB 与 2-bit BHT，未牺牲整核关键路径与 Fmax 的前提下，CoreMark 跑分直接跨过 **3.0 CoreMark/MHz** 大关，CoreMark 计时区间 Ticks 减少 16.3%。
+> 注：整机 CPI（1.53 → 1.22）的统计区间包含 UART 发送忙等循环，其指令数随核速度变化，只能作参考；精确的冲刷次数需要后续补充 `perf_branch_flush` 计数器。
 
 ---
 

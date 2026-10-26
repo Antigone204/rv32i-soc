@@ -3,10 +3,10 @@
 [![Language: Verilog-2001](https://img.shields.io/badge/Language-Verilog--2001-blue.svg)](#)
 [![ISA: RV32IM](https://img.shields.io/badge/ISA-RV32IM%20(Zicsr%20ready)-orange.svg)](#)
 [![Lint: Verilator 0W](https://img.shields.io/badge/Verilator%20Lint-0%20Warnings-brightgreen.svg)](#)
-[![ISA Tests: 38/38 PASS](https://img.shields.io/badge/ISA%20Tests-38%2F38%20PASS-brightgreen.svg)](#)
+[![ISA Tests: 46/46 PASS](https://img.shields.io/badge/ISA%20Tests-rv32ui%2Bum%2046%2F46%20PASS-brightgreen.svg)](#)
 [![DiffTest: Spike 100%](https://img.shields.io/badge/DiffTest-Spike%20100%25%20Match-brightgreen.svg)](#)
-[![CoreMark: 3.025/MHz](https://img.shields.io/badge/CoreMark%2FMHz-3.025%20(CPI%201.22)-brightgreen.svg)](#)
-[![SIMD MAC: 24.98x](https://img.shields.io/badge/INT8%20GEMV%20Speedup-24.98x-blueviolet.svg)](#)
+[![CoreMark: 3.025/MHz](https://img.shields.io/badge/CoreMark%2FMHz-3.025%20(sim)-brightgreen.svg)](#)
+[![SIMD MAC: 24.98x vs soft / 3.32x vs MUL](https://img.shields.io/badge/INT8%20GEMV%20Speedup-24.98x%20vs%20soft%20%7C%203.32x%20vs%20MUL-blueviolet.svg)](#)
 [![Target: Pango Logos-2](https://img.shields.io/badge/Target%20FPGA-Pango%20Logos--2%20PG2L200H-purple.svg)](#)
 
 > **2026 全国大学生嵌入式芯片与系统设计竞赛 · 紫光同创企业赛道 · 选题一（RISC-V 并行加速系统）**  
@@ -24,11 +24,11 @@
    - 所有片上存储结构（通用寄存器堆、双端口 SRAM、同步 FIFO）均采用标准行为可综合/可推断描述，天然支持多平台移植。
    - 严格执行零警告策略，在 Verilator `-Wall` 顶层静态 Lint 下保持 **0 Error, 0 Warning**。
 2. **严苛的软硬件协同验证闭环**：
-   - **指令集验证**：官方 `rv32ui` 全套 38 项基准测试 100% 自动化通过。
-   - **差分比对 (DiffTest)**：与 RISC-V 官方 Spike Golden Model 实现逐周期/逐指令提交追踪比对（PC、目标寄存器 `rd`、写入数据 `wdata`），实现 38/38 项 100% 吻合（零 Mismatch）。
-   - **裸机 C 运行时与基准评测**：自主构建零 OS 依赖的 Freestanding C Runtime（含 `crt0`、`link.ld`、无锁原子防撕裂 64 位 CLINT 定时器、8B FIFO 流控 UART0 及轻量级 `printf`），并在纯 RV32I 体系下完整运行 EEMBC CoreMark 2K Performance Run，测定硬件基线指标 **`0.958 CoreMark/MHz`**（CPI 1.51）。
+   - **指令集验证**：官方 `rv32ui`（38 项）+ `rv32um`（8 项）共 46 项测试 100% 自动化通过（含除零、$-2^{31}/-1$ 溢出等 M 扩展边界）。
+   - **差分比对 (DiffTest)**：与 RISC-V 官方 Spike Golden Model 实现逐周期/逐指令提交追踪比对（PC、目标寄存器 `rd`、写入数据 `wdata`），实现 46/46 项 100% 吻合（零 Mismatch；rv32ui 对标 `--isa=rv32i`，rv32um 对标 `--isa=rv32im`）。
+   - **裸机 C 运行时与基准评测**：自主构建零 OS 依赖的 Freestanding C Runtime（含 `crt0`、`link.ld`、无锁原子防撕裂 64 位 CLINT 定时器、8B FIFO 流控 UART0 及轻量级 `printf`），并完整运行 EEMBC CoreMark 2K Performance Run：纯 RV32I 基线 **`0.958 CoreMark/MHz`** → +M 扩展 **`2.533`** → +BPU **`3.025 CoreMark/MHz`**（仿真测得，ITERATIONS=2，非 EEMBC 官方报告格式）。
 3. **架构可扩展性与模块化档位**：
-   - 针对分支预测器（BTB/BHT）、M 扩展乘除法器、指令/数据 Cache 与并行加速算子预留标准解耦总线接口与升级路径。
+   - 分支预测器（BTB/BHT）、M 扩展乘除法器、并行 SIMD 加速算子均以低侵入方式接入（独立模块 + 正交接口）；CSR/异常 Trap 与指令/数据 Cache 为后续升级路径。
 
 ---
 
@@ -37,12 +37,12 @@
 | 阶段 / 模块 | 核心内容与技术特性 | 验证指标 / 成果 | 状态 |
 |:---|:---|:---|:---:|
 | **阶段 0<br>(Core)** | • 经典 5 级静态流水线（IF / ID / EX / MEM / WB）<br>• 全通路数据前推网络（EX-EX, MEM-EX, 内部直通 RegFile）<br>• 完整冒险控制（Load-Use 1 拍停顿、SW→LW 结构冒险停顿、停顿前推锁存）<br>• BRAM 同步读时序适配（提前发出取指与 Load 读地址） | • Verilator `-Wall` 0 警告<br>• 38/38 项官方 `rv32ui` 测试 100% PASS<br>• Spike DiffTest 38/38 逐指令 100% MATCH<br>• 加权平均 CPI = **1.116** | ✅ 已完成 |
-| **阶段 S1a & S1b<br>(Minimal SoC)** | • **Wishbone B4 固定 1 拍同步子集总线**（Classic 周期，解耦无等待）<br>• 1-Master 4-Slave 互联交叉译码器（支持未映射空间单拍虚拟 ACK）<br>• 64KB 双端口片上 SRAM（Port A 零等待直连取指，Port B 挂载 Wishbone 数据总线）<br>• SiFive FE310 兼容 UART0（含 8 字节收发双 FIFO 与流控）<br>• RISC-V 标准 64 位单调递增 CLINT 定时器（`mtime` / `mtimecmp`） | • 9/9 单元模块全部 PASS<br>• SoC 顶层软硬件集成自检 `test_soc.S` PASS<br>• `Cycles: 233, Insts: 128, CPI: 1.82` | ✅ 已完成 |
+| **阶段 S1a & S1b<br>(Minimal SoC)** | • **Wishbone B4 固定 1 拍同步子集总线**（Classic 周期，解耦无等待）<br>• 1-Master 3-Slave 互联交叉译码器（支持未映射空间单拍虚拟 ACK；A1 阶段扩展为 4-Slave）<br>• 64KB 双端口片上 SRAM（Port A 零等待直连取指，Port B 挂载 Wishbone 数据总线）<br>• SiFive FE310 兼容 UART0（含 8 字节收发双 FIFO 与流控）<br>• RISC-V 标准 64 位单调递增 CLINT 定时器（`mtime` / `mtimecmp`） | • 9/9 单元模块全部 PASS<br>• SoC 顶层软硬件集成自检 `test_soc.S` PASS<br>• `Cycles: 233, Insts: 128, CPI: 1.82` | ✅ 已完成 |
 | **阶段 S1c<br>(C Runtime)** | • 零 OS 依赖的裸机 C 运行时环境（Freestanding Runtime）<br>• 链接脚本 `link.ld`（规范排布 64KB 物理空间与栈顶）<br>• 启动汇编 `crt0.S`（寄存器清零、BSS 清零、`SIM_CTRL` 上报）<br>• 驱动与库函数：`soc.h`, `uart.h/c` (轻量 `printf`), `timer.h/c` (64 位原子防撕裂读取), `str.h/c`<br>• GCC 软乘除法库 `libgcc`（`__mulsi3`, `__divsi3`, `__udivsi3`）链接支持 | • `make test-c` 综合验收测试 PASS<br>• 覆盖递归调用 (`fib(10)=55`)、软乘除法与长字符串打印<br>• `Cycles: 34314, Insts: 16438, CPI: 2.09` | ✅ 已完成 |
 | **阶段 S1d<br>(CoreMark 基线)** | • 导入业界标准 EEMBC CoreMark 权威算法套件<br>• 定制底层适配移植层 `core_portme.c/h`（静态内存分配，无浮点依赖）<br>• 运行 2K Performance Run 严苛校验集（`seedcrc=0xe9f5`） | • `Correct operation validated.` 校验通过<br>• 特征 CRC 匹配（`crcfinal=0x72be`）<br>• **纯 RV32I 基线：`0.958 CoreMark/MHz`** (CPI 1.51) | ✅ 已完成 |
-| **阶段 M1<br>(RV32M 硬件乘除)** | • 33×33 符号扩展单周期/打一拍硬件乘法器 (`MUL/MULH/MULHSU/MULHU`)<br>• 32 拍恢复余数试商除法器 + 除零/溢出 1 拍快速旁路 (`DIV/DIVU/REM/REMU`)<br>• 配套方案对比讲义 [`docs/spec/m_ext.md`](docs/spec/m_ext.md) | • 消除 87.4 万条软乘除循环指令<br>• **CoreMark 跃升至 `2.533 CoreMark/MHz` (+164.4%)**<br>• 100% 通过 ISA 与 Spike DiffTest | ✅ 已完成 |
-| **阶段 P1<br>(动态分支预测)** | • IF 级 64 项直接映射 BTB + 2-bit 饱和计数器 BHT (`rtl/core/bpu.v`)<br>• Taken-only 动态表项分配 + 无条件跳转标识 `btb_uncond`<br>• 预测随流水级前传、EX 级精确纠偏，实现 **0 气泡跳转**<br>• 配套方案对比讲义 [`docs/spec/bpu.md`](docs/spec/bpu.md) | • **CoreMark 突破 `3.025 CoreMark/MHz` (+215.8% vs 基线)**<br>• **整机 CPI 从 1.53 降至 `1.22`**<br>• 消除 80%+ 分支冲刷气泡 | ✅ 已完成 |
-| **阶段 A1<br>(并行算子加速)** | • Wishbone 4 路并行 SIMD INT8 乘累加器 (`rtl/acc/wb_mac_acc.v`, `0x2000_0000`)<br>• 隐式写触发 (`ACC_OPB_TRIG`) + 偏置预载 + 硬件零延迟 ReLU 激活读端口<br>• 配套方案对比讲义 [`docs/spec/acc.md`](docs/spec/acc.md) | • $16\times 64$ INT8 全连接层 (1024 MACs + Bias + ReLU) 100% 吻合<br>• **相对软乘基线加速 `24.98x`** (`63,377` → `2,537` 周期)<br>• **相对 RV32IM 标量加速 `3.31x`** | ✅ 已完成 |
+| **阶段 M1<br>(RV32M 硬件乘除)** | • 33×33 符号扩展单周期/打一拍硬件乘法器 (`MUL/MULH/MULHSU/MULHU`)<br>• 32 拍恢复余数试商除法器 + 除零/溢出 1 拍快速旁路 (`DIV/DIVU/REM/REMU`)<br>• 配套方案对比讲义 [`docs/spec/m_ext.md`](docs/spec/m_ext.md) | • 消除 87.4 万条软乘除循环指令<br>• **CoreMark 跃升至 `2.533 CoreMark/MHz` (+164.4%)**<br>• 官方 `rv32um` 8/8 PASS + Spike DiffTest 8/8 MATCH | ✅ 已完成 |
+| **阶段 P1<br>(动态分支预测)** | • IF 级 64 项直接映射 BTB + 2-bit 饱和计数器 BHT (`rtl/core/bpu.v`)<br>• Taken-only 动态表项分配 + 无条件跳转标识 `btb_uncond`<br>• 预测随流水级前传、EX 级精确纠偏，实现 **0 气泡跳转**<br>• 配套方案对比讲义 [`docs/spec/bpu.md`](docs/spec/bpu.md) | • **CoreMark 突破 `3.025 CoreMark/MHz` (+215.8% vs 基线)**<br>• CoreMark 计时区间 Ticks `789,387` → `660,991`（-16.3%）<br>• 整机 CPI 1.53 → 1.22（注：含 UART 忙等循环，仅作参考） | ✅ 已完成 |
+| **阶段 A1<br>(并行算子加速)** | • Wishbone 4 路并行 SIMD INT8 乘累加器 (`rtl/acc/wb_mac_acc.v`, `0x2000_0000`)<br>• 隐式写触发 (`ACC_OPB_TRIG`) + 偏置预载 + 硬件零延迟 ReLU 激活读端口<br>• 配套方案对比讲义 [`docs/spec/acc.md`](docs/spec/acc.md) | • $16\times 64$ INT8 全连接层 (1024 MACs + Bias + ReLU) 100% 吻合<br>• **相对软乘基线加速 `24.98x`** (`63,377` → `2,537` 周期)<br>• **相对 RV32IM 标量硬件 MUL 加速 `3.32x`** (`8,418` → `2,537` 周期) | ✅ 已完成 |
 | **阶段 B1<br>(FPGA 板级适配)** | • 盘古 200K-MINI (`PG2L200H-6FBB676`, 27 MHz) 管脚约束与顶层 `fpga_top.v`<br>• BRAM 预置固件 `firmware_words.hex` 自动生成 (`make fpga-fw`) | • `make lint` 覆盖 `fpga_top` 0 警告<br>• 待 PDS License 就绪后综合烧录 | 🔜 待上板 |
 
 ---
@@ -54,8 +54,8 @@
 ```
                             ┌──────────────────────────────────────────────┐
                             │                 core.v                       │
-                            │      5-Stage Pipelined RV32I Processor       │
-                            │                                              │
+                            │   5-Stage Pipelined RV32IM Processor         │
+                            │   (IF 级 BPU: BTB+BHT · EX 级 muldiv)        │
                             │      imem_*                      dmem_*      │
                             └────────┬───────────────────────────┬─────────┘
                                      │ (Fetch 直连)              │ (Memory 访问)
@@ -64,16 +64,16 @@
                                │  Port A    │              │   Bridge   │
                                │ (零等待取指)│              └─────┬──────┘
                                └─────┬──────┘                     │ Wishbone B4
-                                     │                     ┌──────▼──────────────────────────┐
-                                     │                     │       wb_interconnect           │
-                               ┌─────▼──────┐              │     (1-Master 4-Slave)          │
-                               │  双端口    │◄────────────►├────────────┬───────────┬────────┤
-                               │  片上 SRAM │  (Port B)    │   SRAM     │   UART0   │ CLINT  │
-                               │  (64 KB)   │  (数据总线)  │  (64 KB)   │  (8B FIFO)│ (Timer)│
-                               └────────────┘              └────────────┴─────┬─────┴───┬────┘
-                                                                              │         │
-                                                                           uart_txd  timer_irq
-                                                                           uart_rxd
+                                     │                     ┌──────▼─────────────────────────────────┐
+                                     │                     │           wb_interconnect              │
+                               ┌─────▼──────┐              │         (1-Master 4-Slave)             │
+                               │  双端口    │◄────────────►├──────────┬──────────┬────────┬─────────┤
+                               │  片上 SRAM │  (Port B)    │  SRAM    │  UART0   │ CLINT  │ MAC ACC │
+                               │  (64 KB)   │  (数据总线)  │ (64 KB)  │(8B FIFO) │(Timer) │(4xINT8) │
+                               └────────────┘              └──────────┴────┬─────┴───┬────┴─────────┘
+                                                                           │         │
+                                                                        uart_txd  timer_irq
+                                                                        uart_rxd
 ```
 
 ### 3.2 存储器映射表 (Memory Map)
@@ -102,7 +102,9 @@
 │   │   ├── decoder.v           # 指令译码器（操作码、立即数格式、流水线控制掩码）
 │   │   ├── imm_gen.v           # 符号扩展立即数生成器（I/S/B/U/J）
 │   │   ├── forwarding_unit.v   # 全通路数据前推单元（EX-EX, MEM-EX）
-│   │   ├── hazard_unit.v       # 冒险控制单元（Load-Use 停顿、SW-LW 结构冒险停顿）
+│   │   ├── hazard_unit.v       # 冒险控制单元（Load-Use 停顿、SW-LW 结构冒险停顿、乘除法忙停顿）
+│   │   ├── muldiv.v            # RV32M 乘除法单元（2 拍乘法 + 32 拍恢复余数除法）
+│   │   ├── bpu.v               # 动态分支预测器（64 项 BTB + 2-bit BHT）
 │   │   └── alu_ops.vh          # ALU 操作码宏定义头文件
 │   └── soc/                    # SoC 互联与片上外设
 │       ├── soc_top.v           # SoC 顶层包装（集成 core、总线、SRAM、UART、CLINT）
@@ -113,13 +115,18 @@
 │       ├── wb_clint.v          # RISC-V 标准 64 位 CLINT 定时器
 │       ├── uart_tx.v           # UART 串行发送 PHY 模块
 │       └── uart_rx.v           # UART 串行接收 PHY 模块
+│   └── acc/                    # 并行算子加速器
+│       └── wb_mac_acc.v        # 4 路 SIMD INT8 乘累加 + 偏置预载 + ReLU（Wishbone 从设备）
 ├── platform/                   # 板级封装与约束
 │   └── pango/                  # 紫光同创盘古 MES2L676 (Logos-2 PG2L200H) 约束与顶层
-│       └── smoke_top.v         # 物理开发板回环冒烟测试顶层
+│       ├── smoke_top.v         # 物理开发板回环冒烟测试顶层
+│       ├── fpga_top.v          # 板级 SoC 顶层（盘古 200K-MINI, 27 MHz）
+│       ├── pangu200k_mini.fdc  # 管脚与时钟约束
+│       └── firmware_words.hex  # BRAM 预置 CoreMark 固件（make fpga-fw 生成）
 ├── sim/                        # 仿真与验证基础设施
 │   ├── unit/                   # 针对各个独立硬件子模块的定向单元测试台
 │   ├── core/                   # CPU 流水线集成自检与微架构冒险定向测试台
-│   ├── isa/                    # RISC-V 官方 rv32ui 指令集移植环境与驱动脚本
+│   ├── isa/                    # RISC-V 官方 rv32ui + rv32um 指令集移植环境与驱动脚本
 │   ├── difftest/               # Spike 模拟器逐指令提交差分验证脚本与对比环境
 │   └── soc/                    # SoC 系统级软硬件集成测试台与测试汇编固件
 ├── sw/                         # 软件与固件栈
@@ -131,13 +138,19 @@
 │   │   ├── timer.h / timer.c   # 64 位防撕裂 CLINT 定时器读取与延时函数
 │   │   └── str.h / str.c       # 标准内存与字符串操作函数 (memcpy, memset 等)
 │   ├── test_c/                 # 阶段 S1c 裸机 C 综合验收程序
+│   ├── test_acc/               # 阶段 A1 INT8 全连接层加速器基准（软件乘 / 硬件 MUL / SIMD 三路对比）
 │   └── coremark/               # 阶段 S1d EEMBC CoreMark 权威性能基准测试移植
 ├── docs/                       # 项目工程与设计文档
 │   ├── spec/
 │   │   ├── core.md             # CPU 处理器核心微架构规格说明书
 │   │   ├── soc.md              # SoC 总线与外设架构规格说明书
+│   │   ├── m_ext.md            # RV32M 乘除法单元规格与方案对比讲义
+│   │   ├── bpu.md              # 分支预测器规格与方案对比讲义
+│   │   ├── acc.md              # SIMD INT8 加速器规格与方案对比讲义
+│   │   ├── pango_200k_mini_pins.md  # 盘古 200K-MINI 管脚分配
 │   │   └── review_summary.md   # 核心微架构与总线设计评审总结
 │   ├── journal.md              # 开发日志与详细 Bug 记录（含现象/定位/根因/修复/教训）
+│   ├── study_guide.md          # 全系统精读手册
 │   └── interview_qa.md         # 面试技术深度 Q&A 题库
 ├── tools/                      # 本地交叉编译工具链（xPack GCC 15.2 等，不入版本库）
 ├── Makefile                    # 全工程一键式构建与自动化测试入口
@@ -160,10 +173,10 @@
 
 本工程开发环境建立在 macOS (仿真验证) 与 Windows (PDS 综合)，所有功能验证均支持在 macOS/Linux 环境下秒级完成自动化回归：
 
-- **RISC-V 交叉编译器**：`xPack riscv-none-elf-gcc 15.2.0`（`-march=rv32i_zicsr -mabi=ilp32`）
-  > *注：竞赛官方说明中提及 `riscv32-unknown-elf-gcc`。两者为完全同源的 GCC 工具链，仅 target 三元组前缀差异，生成的 RV32I 机器码严格等价。*
+- **RISC-V 交叉编译器**：`xPack riscv-none-elf-gcc 15.2.0`（C 程序 `-march=rv32im_zicsr -mabi=ilp32`；rv32ui ISA 测试仍用 `rv32i_zicsr`）
+  > *注：竞赛官方说明中提及 `riscv32-unknown-elf-gcc`。两者为完全同源的 GCC 工具链，仅 target 三元组前缀差异，生成的 RV32I/RV32IM 机器码严格等价。*
 - **Verilog 仿真工具**：`Icarus Verilog` (v12.0+)、`Verilator` (v5.052+)
-- **Golden Model 模拟器**：`Spike` (支持 `--isa=rv32i`)
+- **Golden Model 模拟器**：`Spike`（`--isa=rv32i` / `--isa=rv32im`）
 - **自动化测试驱动**：`Python 3`
 
 ### 5.2 一键式验证命令与当前实测状态
@@ -172,14 +185,15 @@
 
 | 验证目标命令 | 验证层级 / 测试对象 | 覆盖范围与说明 | 当前实测结果 | 典型耗时 |
 |:---|:---|:---|:---:|:---:|
-| `make lint` | 静态代码分析 | 覆盖 `smoke_top`、`core`、`soc_top` 顶层与全部子模块 | ✅ **0 Error, 0 Warning** | ~0.1s |
-| `make unit-test` | 模块级单元测试 | 9 项独立测试（ALU, RegFile, ImmGen, Decoder, Forwarding, Hazard, Interconnect, UART, CLINT） | ✅ **9/9 ALL PASSED** | ~1.5s |
+| `make lint` | 静态代码分析 | 覆盖 `smoke_top`、`core`、`soc_top`、`fpga_top` 4 个顶层与全部子模块 | ✅ **0 Error, 0 Warning** | ~0.1s |
+| `make unit-test` | 模块级单元测试 | 12 项独立测试（ALU, RegFile, ImmGen, Decoder, Forwarding, Hazard, **MulDiv, BPU**, Interconnect, UART, CLINT, **MAC ACC**） | ✅ **12/12 ALL PASSED** | ~1.5s |
 | `make test-core` | 处理器核心自检 | 5 级流水线基础运算 + SW-LW 结构冒险 + EX 停顿前推锁存 | ✅ **3/3 ALL PASSED** | ~0.5s |
 | `make test-soc` | SoC 软硬件集成 | 汇编固件经总线读写 SRAM、UART 字符回显、CLINT 轮询与信箱上报 | ✅ **PASSED**<br>(Cycles: 233, CPI: 1.82) | ~0.2s |
-| `make test-c` | 裸机 C 运行时验收 | 栈空间、递归 (`fib(10)=55`)、`libgcc` 软乘除法、防撕裂 Timer、长字符串 `printf` | ✅ **PASSED**<br>(Cycles: 34314, CPI: 2.09) | ~1.0s |
-| `make isa-test` | 官方指令集回归 | RV32UI 官方测试集 38 项严苛用例自动化回归 | ✅ **38/38 100% PASSED**<br>(加权 CPI = **1.116**) | ~2.8s |
-| `make difftest` | Spike 差分比对 | 与 Spike 逐条比对 PC、目标寄存器索引、写回数值 | ✅ **38/38 100% MATCH**<br>(0 Mismatch) | ~4.5s |
-| `make coremark` | 权威性能基准评测 | 完整运行 EEMBC CoreMark 2K Performance Run | ✅ **Correct operation validated**<br>**`0.958 CoreMark/MHz`** (CPI 1.51) | ~18s |
+| `make test-c` | 裸机 C 运行时验收 | 栈空间、递归 (`fib(10)=55`)、硬件乘除法、防撕裂 Timer、长字符串 `printf` | ✅ **PASSED**<br>(Cycles: 33115, CPI: 1.53) | ~1.0s |
+| `make isa-test` | 官方指令集回归 | 官方 `rv32ui` 38 项 + `rv32um` 8 项自动化回归 | ✅ **46/46 100% PASSED**<br>(rv32ui 加权 CPI = 1.177) | ~3.6s |
+| `make difftest` | Spike 差分比对 | 与 Spike 逐条比对 PC、目标寄存器索引、写回数值 | ✅ **46/46 100% MATCH**<br>(0 Mismatch) | ~5s |
+| `make test-acc` | 加速器基准 | 16×64 INT8 全连接层（1024 MAC + Bias + ReLU）三路实现对比 | ✅ **PASSED**<br>软件乘 63,377 / 硬件 MUL 8,418 / SIMD 2,537 周期<br>(**24.98×** vs 软件乘，**3.32×** vs 硬件 MUL) | ~3s |
+| `make coremark` | 权威性能基准评测 | 完整运行 EEMBC CoreMark 2K Performance Run | ✅ **Correct operation validated**<br>**`3.025 CoreMark/MHz`**<br>(仿真测得，ITERATIONS=2，非 EEMBC 官方报告格式) | ~20s |
 
 #### 常用一键全量回归命令：
 ```bash
@@ -197,6 +211,7 @@ make difftest
 # 4. SoC 系统级软硬件协同与 CoreMark 基准跑分
 make test-soc
 make test-c
+make test-acc
 make coremark
 ```
 

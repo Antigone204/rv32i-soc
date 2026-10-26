@@ -17,7 +17,7 @@
   - **条件分支 (B-type Branch)**: `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`
   - **无条件跳转 (J-type / I-type)**: `JAL`, `JALR`
   - **长立即数构建 (U-type)**: `LUI`, `AUIPC`
-  - **系统与控制 (SYSTEM)**: `ECALL`, `EBREAK`, `FENCE` (当做 NOP), 以及核心 CSR 读写 (`CSRRW`, `CSRRS`, `CSRRC`) 【待实现：Tier B 任务】
+  - **系统与控制 (SYSTEM)**: `ECALL`, `EBREAK`, `FENCE` (当做 NOP), 以及核心 CSR 读写 (`CSRRW`, `CSRRS`, `CSRRC`) 【待实现：A 档模块（见 AGENTS.md）】
 
 ---
 
@@ -92,7 +92,7 @@
   - `flush_if_id = 1`, `flush_id_ex = 1`：冲刷被错误取出的 2 条后续指令；
   - PC 加载跳转目标地址；
   - 惩罚周期为 2 拍。
-- **未来升级路径**：在 IF 级引入 Branch Target Buffer (BTB) + 2-bit 饱和计数器【待实现：Tier A 手写】，预测失败时仅冲刷，预测成功时无惩罚。
+- **动态分支预测（阶段 P1）**：【已实现】IF 级 64 项 BTB + 2-bit 饱和计数器 BHT（`rtl/core/bpu.v`），EX 级比对预测方向与目标，预测正确 0 气泡，预测失败仍按上述方式冲刷 2 拍。详见 [`bpu.md`](bpu.md)。
 
 ---
 
@@ -123,14 +123,14 @@ input  wire [31:0] dmem_rdata    // 读出数据 (同步 1 拍延迟返回)
 用于 CoreMark / 性能评测与调试：
 - `perf_cycle`: 累计时钟周期数；【已实现】
 - `perf_instret`: 累计提交指令数（WB 级提交一条非气泡有效指令时累加）；【已实现】
-- `perf_load_stall`: Load-Use 停顿周期数；【待实现】
-- `perf_branch_flush`: 分支预测失败/跳转冲刷次数。【待实现】
+- `perf_load_stall`: Load-Use 停顿周期数；【待实现，RTL 中尚无此计数器】
+- `perf_branch_flush`: 分支预测失败/跳转冲刷次数。【待实现，RTL 中尚无此计数器；BPU 收益目前只能用 CoreMark Ticks 间接衡量】
 
 ---
 
 ## 6. 验证与验收准则
 
-1. 单指令与组合逻辑单元级仿真通过 (`make unit-test`)；✅ 6/6 PASS
+1. 单指令与组合逻辑单元级仿真通过 (`make unit-test`)；✅ 12/12 PASS（含 SoC 外设、MulDiv、BPU、MAC ACC）
 2. 5 级流水线集成自检测试通过 (`make test-core`，覆盖 RAW 前推、Load-Use 停顿、分支冲刷、访存，提交指令数=10)；✅ 3/3 PASS
-3. 运行官方 `riscv-tests` (rv32ui-p-*) 全部 38 项单元测试，全部 PASS；✅ 38/38 PASS（`make isa-test`，CPI 1.07~1.28）
-4. 基于 Spike 的 DiffTest 差分验证：在每条指令写回阶段打印 PC、目标寄存器及写回数据，与 Spike 单步执行严格一致。✅ 38/38 MATCH（`make difftest`，0 Mismatch）
+3. 运行官方 `riscv-tests` (rv32ui-p-*) 全部 38 项单元测试，全部 PASS；✅ 38/38 PASS；另含 `rv32um-p-*` 8 项（M 扩展），合计 46/46 PASS（`make isa-test`）
+4. 基于 Spike 的 DiffTest 差分验证：在每条指令写回阶段打印 PC、目标寄存器及写回数据，与 Spike 单步执行严格一致。✅ 46/46 MATCH（`make difftest`，rv32ui 对标 `--isa=rv32i`，rv32um 对标 `--isa=rv32im`，0 Mismatch）
