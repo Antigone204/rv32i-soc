@@ -89,14 +89,19 @@ make fpga-fw
   - `rtl/soc/wb_clint.v`
   - `rtl/soc/uart_tx.v`
   - `rtl/soc/uart_rx.v`
+- **硬件加速器**：
+  - `rtl/acc/wb_mac_acc.v`
 - **CPU 核心**：
   - `rtl/core/core.v`
   - `rtl/core/alu.v`
+  - `rtl/core/alu_ops.vh`（或把 `rtl/core` 加入 Include Path）
   - `rtl/core/decoder.v`
   - `rtl/core/imm_gen.v`
   - `rtl/core/regfile.v`
   - `rtl/core/forwarding_unit.v`
   - `rtl/core/hazard_unit.v`
+  - `rtl/core/bpu.v`
+  - `rtl/core/muldiv.v`
 - **固件初始化文件**：
   - 将 `platform/pango/firmware_words.hex` 复制到 PDS 工程根目录下（即 `.pds` 同级目录），或者在 `fpga_top.v` 中指定其相对/绝对路径。
 
