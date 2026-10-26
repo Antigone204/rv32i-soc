@@ -436,3 +436,52 @@ M1 之后，`make isa-test` / `make difftest` 仍然只跑 `rv32ui`（`-march=rv
   - 每个循环多 2 拍。R 型测试有 15 个 bypass 循环（+30），I 型有 6 个（+12），完全吻合。
 - **结论**：这不是功能 bug，而是 2-bit BHT 在"短循环 + 冷启动"场景下的固有代价。CoreMark 里的长循环占主导，所以总体仍然 +19%。
 - **教训**：微架构优化要在**真实负载**上评估，ISA 合规测试的 CPI 不能当性能指标。这个现象也可以用来回答面试题"分支预测有没有可能让程序变慢"。
+
+---
+
+## 2026-10-26 PDS 2022.2-SP6.4 首次全流程综合、时序签核与远程实验箱引脚核查 (阶段 B1)
+
+### 阶段背景与目标
+
+Windows 端 Pango Design Suite (`PDS 2022.2-SP6.4 build 146967`) License 就绪后，通过命令行 `pds_shell.exe` 对 `smoke_top` 与完整 RV32IM + BPU + SIMD MAC SoC (`fpga_top`) 执行首次端到端综合、映射、布局布线、静态时序分析与 `.sbit` 比特流生成，并核查远程 FPGA 实验平台的实际硬件形态。
+
+### 实测资源占用与硬核推断 (`fpga_top` @ `PG2L200H-6FBB676`)
+
+| 资源类型 | 占用数量 | 芯片总量 | 利用率 | 硬件推断与映射明细 (`apm_drm_lutram_utilization.log`) |
+|:---|---:|---:|---:|:---|
+| **LUT** | **3,359** | 159,800 | **2.10%** | 5 级流水线 + BPU 控制 + Wishbone 互联与外设 |
+| **FF (Registers)** | **5,067** | 319,600 | **1.59%** | 流水线级间寄存器 + 64 项 BTB/BHT + 除数/余数迭代寄存器 |
+| **DRM (Block RAM)** | **33.0** | 415 | **7.95%** | `u_soc/u_sram/mem`: 8 × `GTP_DRM36K_E1` (16K×8 SDP, 64 KB) + `u_regfile`: 2 × `GTP_DRM18K_E1` |
+| **APM (DSP Slices)** | **8** | 280 | **2.86%** | `u_core/u_muldiv`: 4 × `GTP_APM_E2` (24×17 级联拼 33×33) + `u_mac_acc`: 4 × `GTP_APM_E2` (8×8 SIMD) |
+
+- **固件初始化**：综合日志明确打印 `Loading memory data from file .../firmware_words.hex`，证实纯 Verilog `$readmemh` 在 PDS ADS 综合器下成功将 CoreMark 固件写入 `GTP_DRM36K_E1` 块 RAM 初始值。
+
+### 实测静态时序分析 (Slow Corner, 目标 27.00 MHz / 37.037 ns)
+
+| 顶层工程 | 约束周期 | 估算最短周期 | 估算最高频率 ($F_{\max}$) | Setup WNS / TNS | Hold WHS / THS | 违例端点 |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| **`smoke_top`** | 37.037 ns | 3.310 ns | **302.11 MHz** | **+33.727 ns** / 0.000 | +0.150 ns / 0.000 | **0** |
+| **`fpga_top`** | 37.037 ns | 17.233 ns | **58.03 MHz** | **+19.804 ns** / 0.000 | **+0.149 ns** / 0.000 | **0 / 17,792** |
+
+- 在 27 MHz 板载晶振下周期利用率仅约 46.5%，建立时间余量高达 `+19.804 ns`，全部 17,792 个时序端点零违例一次收敛，最高可运行在 **58 MHz**。
+
+### PDS 批处理构建 (`pds_shell`) 五条实测避坑记录
+
+1. **禁止在批处理 Tcl 中调用 `save_project`**：脚本模式下调用会报 `Flow-4055: Please new or open a project`；`pds_shell` 会自动按脚本名创建同名 `.pds` 工程。
+2. **必须显式指定 `synthesize -ads`**：裸调 `synthesize` 默认走未安装的第三方 Synplify，表现为假成功但不生成 `synthesize/` 目录，随后 `dev_map` 报 `Flow-0227`。
+3. **工程与源码路径严禁含中文/非 ASCII 字符**：置于 `OneDrive\文档` 下会报 `Flow-0002: File '...\??\...' doesn't exist`。
+4. **`firmware_words.hex` 必须放置在 `-work_dir`（`.pds` 同级启动目录）**：`$readmemh` 按进程工作目录解析，放在 `synthesize/` 子目录下不生效。
+5. **`.fdc` 必须补齐 `create_clock` 时序约束**：原 `pangu200k_mini.fdc` 仅含 IO 位置属性，缺省时 PDS 按 `1000 ns (1 MHz)` 分析；已补入标准约束语法：
+   `create_clock -name {sys_clk} [get_ports {sys_clk}] -period {37.037} -waveform {0.000 18.519}`
+
+### 远程平台硬件形态核查：200K-MINI 核心板 vs 远程实验箱
+
+- **发现**：对比远程平台导出的 `Matrix_led.fdc`（48 端口）与底板映射表 `mini-base管脚映射.xlsx` 发现，远程平台并非裸跑 200K-MINI 底板丝印外设（J3），而是在底板 **J10（40-pin 扩展口，Bank L6）** 上挂载了**实验箱外设面板**（4 颗单色 LED、4 颗按键、4 颗 RGB 灯、8 位数码管、8×8 点阵）：
+  - `sys_clk` (`D18`, 27 MHz) 与 `rst_n` (`C22`) 与核心板完全一致；
+  - 实验箱 `key[3:0]` 位于 `U21, W24, V24, AA23`（J10 引脚 32/33/34/35），而非底板的 `C23, B22, A22, B20`；
+  - 实验箱 `led[3:0]` 位于 `U16, U15, V17, V16`（J10 引脚 27/28/29/30），而非底板的 `A20, C18, C19, E18`；
+  - 实验箱的 UART 引脚未出现在点阵 demo 的 48 个端口中，待从平台串口通信例程中获取。
+- **仓库处置**：
+  - 保留 `platform/pango/pangu200k_mini.fdc`（供 200K-MINI 实物板使用，已补 `create_clock`）；
+  - 新增 `platform/pango/pangu_experiment_box.fdc`（将 `key[3:0]` 与 `led[3:0]` 映射至实验箱 J10 对应球号，`led[7:4]` 留驻核心板无冲突球号 `A17..B17`）；
+  - 新增 `platform/pango/build_fpga_top.tcl` 与 `build_smoke_top.tcl`，固化一键可复现构建流程。

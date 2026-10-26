@@ -43,7 +43,7 @@
 | **阶段 M1<br>(RV32M 硬件乘除)** | • 33×33 符号扩展单周期/打一拍硬件乘法器 (`MUL/MULH/MULHSU/MULHU`)<br>• 32 拍恢复余数试商除法器 + 除零/溢出 1 拍快速旁路 (`DIV/DIVU/REM/REMU`)<br>• 配套方案对比讲义 [`docs/spec/m_ext.md`](docs/spec/m_ext.md) | • 消除 87.4 万条软乘除循环指令<br>• **CoreMark 跃升至 `2.533 CoreMark/MHz` (+164.4%)**<br>• 官方 `rv32um` 8/8 PASS + Spike DiffTest 8/8 MATCH | ✅ 已完成 |
 | **阶段 P1<br>(动态分支预测)** | • IF 级 64 项直接映射 BTB + 2-bit 饱和计数器 BHT (`rtl/core/bpu.v`)<br>• Taken-only 动态表项分配 + 无条件跳转标识 `btb_uncond`<br>• 预测随流水级前传、EX 级精确纠偏，实现 **0 气泡跳转**<br>• 配套方案对比讲义 [`docs/spec/bpu.md`](docs/spec/bpu.md) | • **CoreMark 突破 `3.025 CoreMark/MHz` (+215.8% vs 基线)**<br>• CoreMark 计时区间 Ticks `789,387` → `660,991`（-16.3%）<br>• 整机 CPI 1.53 → 1.22（注：含 UART 忙等循环，仅作参考） | ✅ 已完成 |
 | **阶段 A1<br>(并行算子加速)** | • Wishbone 4 路并行 SIMD INT8 乘累加器 (`rtl/acc/wb_mac_acc.v`, `0x2000_0000`)<br>• 隐式写触发 (`ACC_OPB_TRIG`) + 偏置预载 + 硬件零延迟 ReLU 激活读端口<br>• 配套方案对比讲义 [`docs/spec/acc.md`](docs/spec/acc.md) | • $16\times 64$ INT8 全连接层 (1024 MACs + Bias + ReLU) 100% 吻合<br>• **相对软乘基线加速 `24.98x`** (`63,377` → `2,537` 周期)<br>• **相对 RV32IM 标量硬件 MUL 加速 `3.32x`** (`8,418` → `2,537` 周期) | ✅ 已完成 |
-| **阶段 B1<br>(FPGA 板级适配)** | • 盘古 200K-MINI (`PG2L200H-6FBB676`, 27 MHz) 管脚约束与顶层 `fpga_top.v`<br>• BRAM 预置固件 `firmware_words.hex` 自动生成 (`make fpga-fw`) | • `make lint` 覆盖 `fpga_top` 0 警告<br>• 待 PDS License 就绪后综合烧录 | 🔜 待上板 |
+| **阶段 B1<br>(FPGA 板级综合)** | • 盘古 200K-MINI / 远程实验箱 (`PG2L200H-6FBB676`, 27 MHz) 约束与顶层 `fpga_top.v`<br>• 命令行无 GUI 一键综合脚本 (`build_fpga_top.tcl`) 与 DRM 固件预置 (`firmware_words.hex`)<br>• 区分 200K-MINI 实物板 (`pangu200k_mini.fdc`) 与远程实验箱 (`pangu_experiment_box.fdc`) | • **PDS 2022.2-SP6.4 全流程综合与比特流生成通过**<br>• 资源：**3,359 LUT (2.10%) / 5,067 FF (1.59%) / 33 DRM (7.95%) / 8 APM**<br>• 时序：**WNS `+19.804 ns`，$F_{\max} = 58.03\text{ MHz}$** (0 违例)<br>• 待补齐远程实验箱 UART 引脚后上板观测 | 🔜 待实验箱 UART 引脚 |
 
 ---
 
@@ -118,11 +118,14 @@
 │   └── acc/                    # 并行算子加速器
 │       └── wb_mac_acc.v        # 4 路 SIMD INT8 乘累加 + 偏置预载 + ReLU（Wishbone 从设备）
 ├── platform/                   # 板级封装与约束
-│   └── pango/                  # 紫光同创盘古 MES2L676 (Logos-2 PG2L200H) 约束与顶层
-│       ├── smoke_top.v         # 物理开发板回环冒烟测试顶层
-│       ├── fpga_top.v          # 板级 SoC 顶层（盘古 200K-MINI, 27 MHz）
-│       ├── pangu200k_mini.fdc  # 管脚与时钟约束
-│       └── firmware_words.hex  # BRAM 预置 CoreMark 固件（make fpga-fw 生成）
+│   └── pango/                  # 紫光同创 Logos-2 (PG2L200H-6FBB676) 约束、脚本与顶层
+│       ├── smoke_top.v         # 物理开发板回环冒烟测试顶层 (Fmax 302.11 MHz)
+│       ├── fpga_top.v          # 板级 SoC 顶层 (27 MHz, Fmax 58.03 MHz)
+│       ├── pangu200k_mini.fdc  # 盘古 200K-MINI 实物板管脚与 27 MHz 时钟约束
+│       ├── pangu_experiment_box.fdc # 远程平台实验箱 (J10 扩展面板) 管脚与时钟约束
+│       ├── build_fpga_top.tcl  # PDS pds_shell 一键综合与比特流生成 Tcl 脚本
+│       ├── build_smoke_top.tcl # 冒烟测试顶层一键构建 Tcl 脚本
+│       └── firmware_words.hex  # DRM 预置 CoreMark 固件 (make fpga-fw 生成)
 ├── sim/                        # 仿真与验证基础设施
 │   ├── unit/                   # 针对各个独立硬件子模块的定向单元测试台
 │   ├── core/                   # CPU 流水线集成自检与微架构冒险定向测试台

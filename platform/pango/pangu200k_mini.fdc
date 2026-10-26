@@ -111,3 +111,5 @@ define_attribute {p:uart_rxd} {PAP_IO_LOC} {B24}
 define_attribute {p:uart_rxd} {PAP_IO_VCCIO} {3.3}
 define_attribute {p:uart_rxd} {PAP_IO_STANDARD} {LVCMOS33}
 define_attribute {p:uart_rxd} {PAP_IO_NONE} {TRUE}
+
+create_clock -name {sys_clk} [get_ports {sys_clk}] -period {37.037} -waveform {0.000 18.519}

@@ -12,13 +12,74 @@
 | **开发板型** | 盘古 200K-MINI 核心板（带 27 MHz 晶振、UART、LED、按键、DDR3） |
 | **EDA 综合工具** | **Pango Design Suite (PDS) 2022.2-SP6.4 win64**（建议对齐此版本，避免工程升级冲突） |
 | **板载系统时钟** | **27 MHz** 有源晶振（引脚 **D18**，LVCMOS33，时钟周期 37.037 ns） |
-| **物理串口参数** | **115200 8N1**（TX = **C24**, RX = **B24**，27 MHz 下 `CLKS_PER_BIT = 234`） |
+| **物理串口参数** | **115200 8N1**（200K-MINI 底板 TX = **C24**, RX = **B24**；远程实验箱 UART 引脚待确认） |
 | **板级顶层模块** | 1. 冒烟排查顶层：`smoke_top.v`<br>2. 完整 RISC-V SoC 顶层：`fpga_top.v` |
-| **板级约束文件** | `pangu200k_mini.fdc` |
+| **板级约束文件** | 1. 200K-MINI 实物核心板+底板：`pangu200k_mini.fdc`<br>2. 远程实验箱平台（J10 扩展面板）：`pangu_experiment_box.fdc` |
+| **一键构建脚本** | `build_smoke_top.tcl`, `build_fpga_top.tcl`（支持 `pds_shell.exe` 无 GUI 批处理） |
 
 ---
 
-## 2. 两个顶层的验证策略
+## 2. PDS 2022.2-SP6.4 实测综合与时序结果 (build 146967)
+
+### 2.1 资源占用与硬核推断 (`fpga_top`)
+
+| 资源类型 | 占用数量 | 芯片总量 (`PG2L200H`) | 利用率 | 硬件推断明细 (`apm_drm_lutram_utilization.log`) |
+|---|---:|---:|---:|---|
+| **LUT** | **3,359** | 159,800 | **2.10%** | 5 级流水线 + BPU + Wishbone 互联 + 外设逻辑 |
+| **FF (Registers)** | **5,067** | 319,600 | **1.59%** | 级间寄存器 + 64 项 BTB/BHT + 状态机 |
+| **DRM (Block RAM)** | **33.0** | 415 | **7.95%** | `u_sram/mem`: 8 × `GTP_DRM36K_E1` (16K×8 SDP, 64 KB) + `u_regfile`: 2 × `GTP_DRM18K_E1` |
+| **APM (DSP 乘法器)** | **8** | 280 | **2.86%** | `u_muldiv`: 4 × `GTP_APM_E2` (24×17 级联拼 33×33) + `u_mac_acc`: 4 × `GTP_APM_E2` (8×8 SIMD) |
+
+- **BRAM 固件初始化确认**：综合日志确认 `Loading memory data from file .../firmware_words.hex` 命中，DRM 初始内容已写入比特流。
+
+### 2.2 静态时序分析 (Slow Corner, 27 MHz / 37.037 ns)
+
+| 顶层工程 | 约束频率 / 周期 | 估算最高频率 ($F_{\max}$) | 估算最短周期 | Setup WNS / TNS | Hold WHS / THS | 违例端点 |
+|---|---|---|---|---|---|---|
+| **`smoke_top`** | 27.00 MHz (37.037 ns) | **302.11 MHz** | 3.310 ns | **+33.727 ns** / 0.000 | +0.150 ns / 0.000 | **0** |
+| **`fpga_top`** | 27.00 MHz (37.037 ns) | **58.03 MHz** | 17.233 ns | **+19.804 ns** / 0.000 | **+0.149 ns** / 0.000 | **0 / 17,792** |
+
+---
+
+## 3. 硬件平台说明：200K-MINI 实物板 vs 远程实验箱
+
+远程 FPGA 平台虽然同样基于 `PG2L200H-6FBB676` 核心板与底板，但其网页监控面板连接在底板 **J10 扩展口（实验箱模块）** 上，外设引脚与核心板/底板直连丝印存在差异：
+
+| 信号 | `pangu200k_mini.fdc`（实物核心板/底板 J3） | `pangu_experiment_box.fdc`（远程实验箱 J10） | 状态 |
+|---|---|---|---|
+| `sys_clk` (27 MHz) | `D18` | **`D18`** | ✅ 完全一致 |
+| `rst_n` | `C22` | **`C22`** | ✅ 完全一致 |
+| `key[3:0]` | `C23, B22, A22, B20` | **`U21, W24, V24, AA23`** | 需按目标平台选择对应 `.fdc` |
+| `led` | `led[7:0]` = `A20, C18, C19, E18, A17, A18, C17, B17` | 实验箱面板为 4 颗灯 **`led[3:0]` = `U16, U15, V17, V16`**（`led[7:4]` 留驻核心板 `A17..B17`） | 需按目标平台选择对应 `.fdc` |
+| `uart_txd / rxd` | `C24 / B24`（底板 CP2102） | **待确认**（需从远程平台 UART 例程获取实验箱串口球号） | ⚠️ 待补齐 |
+
+---
+
+## 4. 命令行一键复现构建 (`pds_shell`)
+
+无需打开 GUI，在 Windows 下使用纯英文短路径（如 `D:\fpga_work\`）可直接通过 `pds_shell.exe` 在约 2.5 分钟内跑完综合、布局布线、时序分析与 `.sbit` 生成：
+
+```bat
+:: 1. 准备纯英文工作目录并拷入固件镜像（$readmemh 按启动目录解析）
+mkdir D:\fpga_work\build\soc
+copy D:\fpga_work\rv32i-soc\platform\pango\firmware_words.hex D:\fpga_work\build\soc\
+
+:: 2. 指定 License 并调用 pds_shell 执行 Tcl 脚本
+set PANGO_LICENSE_FILE=C:\pango\license\your_license.lic
+C:\pango\PDS_2022.2-SP6.4\bin\pds_shell.exe -work_dir D:\fpga_work\build\soc -file D:\fpga_work\rv32i-soc\platform\pango\build_fpga_top.tcl
+```
+
+### 5 个已验证的 PDS 2022.2-SP6.4 关键避坑点
+1. **不要在批处理 Tcl 中调用 `save_project`**：脚本模式下会报 `Flow-4055: Please new or open a project`；PDS 会自动以脚本名创建 `<name>.pds` 工程。
+2. **必须显式指定 `synthesize -ads`**：不带 `-ads` 时默认调用未安装的 Synplify，表现为假成功但不产出网表，导致后续 `dev_map` 报 `Flow-0227`。
+3. **路径严禁包含中文或非 ASCII 字符**：放在 `OneDrive\文档` 下会报 `Flow-0002: File '...\??\...' doesn't exist`。
+4. **`firmware_words.hex` 必须放在 `-work_dir`（`.pds` 同级目录）下**：`$readmemh` 按启动工作目录解析，放在 `synthesize/` 子目录下无效。
+5. **`.fdc` 必须包含 `create_clock` 约束**：否则 PDS 默认按 `1000 ns (1 MHz)` 分析时序；语法需给周期与波形参数加花括号：
+   `create_clock -name {sys_clk} [get_ports {sys_clk}] -period {37.037} -waveform {0.000 18.519}`
+
+---
+
+## 5. 两个顶层的验证策略
 
 ```mermaid
 flowchart TD
