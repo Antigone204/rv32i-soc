@@ -9,3 +9,7 @@ __pycache__/
 # PDS generated
 platform/pango/prj/*/
 !platform/pango/prj/README.md
+
+# Local-only notes & AI rules
+AGENTS.md
+docs/interview_qa.md

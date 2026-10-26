@@ -1,6 +1,6 @@
 # 并行算子硬件加速器 (wb_mac_acc) 规格书与微架构对比讲义
 
-> **适用范围**：本讲义针对全国大学生嵌入式芯片与系统设计竞赛（紫光同创 FPGA 平台）赛题一“RISC-V 并行加速系统”，详细阐述挂载在 Wishbone B4 共享总线上的 **4 路并行 SIMD INT8 乘累加与 ReLU 激活硬件加速单元（`wb_mac_acc.v`）** 的理论背景、硬件微架构实现、源码逐段精读、四种加速架构对比以及高频面试深挖。
+> **适用范围**：本讲义针对全国大学生嵌入式芯片与系统设计竞赛（紫光同创 FPGA 平台）赛题一“RISC-V 并行加速系统”，详细阐述挂载在 Wishbone B4 共享总线上的 **4 路并行 SIMD INT8 乘累加与 ReLU 激活硬件加速单元（`wb_mac_acc.v`）** 的理论背景、硬件微架构实现、源码逐段精读、四种加速架构对比以及关键微架构深挖。
 
 ---
 
@@ -33,7 +33,7 @@ $$Y = \text{ReLU}\left(\sum_{i=0}^{K-1} W_i \cdot X_i + \text{Bias}\right)$$
 
 ---
 
-## 2. 四种硬件加速器耦合架构深度对比（面试高频重点）
+## 2. 四种硬件加速器耦合架构深度对比
 
 根据硬件加速单元与 CPU 流水线的物理拓扑、寄存器映射和数据通路耦合程度，业界存在四种典型的加速器集成范式：
 
@@ -132,7 +132,7 @@ module wb_mac_acc (
 
 ## 4. `wb_mac_acc.v` 源码逐段导读与时序波形
 
-源码位于 [`rtl/acc/wb_mac_acc.v`](file:///Users/antigone204/Documents/antigravity/radiant-heisenberg/rtl/acc/wb_mac_acc.v)，全长仅 134 行纯 Verilog-2001，遵循高内聚设计。
+源码位于 [`rtl/acc/wb_mac_acc.v`](../../rtl/acc/wb_mac_acc.v)，全长仅 134 行纯 Verilog-2001，遵循高内聚设计。
 
 ### 4.1 4 路 INT8 并行乘法与符号扩展求和数据通路
 
@@ -227,7 +227,7 @@ wbs_dat_o       : XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX< ReLU(acc)>XXX
 
 ## 5. 算子基准评测分析 (`sw/test_acc/main.c`)
 
-在 [`sw/test_acc/main.c`](file:///Users/antigone204/Documents/antigravity/radiant-heisenberg/sw/test_acc/main.c) 中，我们部署了一个全连接网络层基准负载：
+在 [`sw/test_acc/main.c`](../../sw/test_acc/main.c) 中，我们部署了一个全连接网络层基准负载：
 - 矩阵维度：$16 \times 64$ 权重矩阵与 $64 \times 1$ 输入向量，共计 **$1024$ 次 INT8 乘加运算（1024 MACs）**；
 - 包含 16 个输出神经元的 Bias 预加与 ReLU 非线性激活。
 
@@ -247,11 +247,11 @@ wbs_dat_o       : XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX< ReLU(acc)>XXX
 
 ---
 
-## 6. 高频面试深挖 Q&A
+## 6. 关键微架构设计深挖 Q&A
 
 ### Q1：为什么边缘 AI 算子普遍选择 INT8 量化而非 FP32？硬件资源与能效比有什么量化优势？
-**面试官提问意图**：考察候选人对模型量化原理与芯片能效比（PPA: Power-Performance-Area）的理解。  
-**参考回答**：
+**核心设计考量**：模型量化原理与芯片能效比（PPA: Power-Performance-Area）。  
+**详细分析**：
 1. **乘法器硬件面积与功耗以位宽二次方下降**：二进制乘法器的硬件复杂度与位宽平方成正比（$O(N^2)$）。一个 32 位浮点（FP32）乘法器需要 24 位尾数相乘和指数对齐逻辑，消耗约数百个门电路；而一个 8 位整数乘法器面积仅约为 FP32 乘法器的 **$1/10 \sim 1/16$**，功耗降低一个数量级；
 2. **片上存储与总线带宽压缩 4 倍**：从 FP32 转换为 INT8 后，权重与特征图模型体积压缩 75%，使得原本需要外挂昂贵 DDR 的网络可直接常驻在片上 SRAM，彻底规避了“内存墙（Memory Wall）”的高功耗访存开销；
 3. **精度损失极低**：通过对称/非对称量化校准（PTQ / QAT），现代神经网络对 INT8 截断具备极高容忍度，精度下降通常 $< 1\%$，完全满足工业边缘识别需求。
@@ -259,8 +259,8 @@ wbs_dat_o       : XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX< ReLU(acc)>XXX
 ---
 
 ### Q2：在 `wb_mac_acc` 中，4 路 INT8 乘法与加法树在单拍内完成，是否会成为系统最高主频（$F_{\max}$）的关键路径（Critical Path）？
-**面试官提问意图**：考察时序分析（STA）能力、加法树延时计算与关键路径感知。  
-**参考回答**：
+**核心设计考量**：静态时序分析（STA）、加法树延时计算与关键路径隔离。  
+**详细分析**：
 1. **不会构成系统主频瓶颈**。在 50 MHz ~ 100 MHz（时钟周期 10 ~ 20 ns）的 FPGA 系统中，该组合路径时延非常小：
    - 8-bit $\times$ 8-bit 有符号乘法器在 FPGA LUT 或硬核 DSP 中的组合延时仅约 $1.5 \sim 2.0\,\text{ns}$；
    - 4 输入 16 位进位加法树（2 级加法）延时约 $1.0\,\text{ns}$；
@@ -270,8 +270,8 @@ wbs_dat_o       : XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX< ReLU(acc)>XXX
 ---
 
 ### Q3：如果全连接层或卷积特征图规模超出单次计算容量（例如 $1024 \times 1024$ 矩阵），该加速器如何进行分块（Tiling）计算？
-**面试官提问意图**：考察候选人对工程算法映射与内存分块（Tiling）策略的掌握。  
-**参考回答**：
+**核心设计考量**：工程算法映射与内存分块（Tiling）策略。  
+**详细分析**：
 1. **输出通道维度分块（Row-wise Tiling）**：本加速器单次完成一个输出神经元（一行向量点积）的偏置注入、累加与激活。对于 $M \times K$ 矩阵，外层循环遍历 $M$ 行输出通道；
 2. **输入通道维度累加分块（Accumulation Chunking）**：
    - 若输入通道 $K > 64$（例如 $K = 512$），由于累加器是 32 位的，动态范围高达 $[-2^{31}, 2^{31}-1]$，而 512 次 INT8 乘加的最大可能极值仅为 $512 \times 16384 \approx 8.3 \times 10^6 \ll 2^{31}$，累加器绝无溢出风险；
@@ -280,8 +280,8 @@ wbs_dat_o       : XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX< ReLU(acc)>XXX
 ---
 
 ### Q4：工业界高性能 NPU（如 Google TPU、华为昇腾）为什么普遍采用“脉动阵列（Systolic Array）”而不是简单的 SIMD 乘累加？二者在数据复用（Data Reuse）维度有什么本质区别？
-**面试官提问意图**：考察候选人从轻量级边缘加速跃迁至工业级专用计算架构的认知视野（Roofline 模型与数据复用）。  
-**参考回答**：
+**核心设计考量**：从轻量级边缘加速到专用计算架构的 Roofline 模型与数据复用。  
+**详细分析**：
 1. **计算访存比（Operational Intensity）的瓶颈差异**：
    - 本项目所采用的 SIMD 架构属于**访存驱动型**：每计算 4 次 MAC，总线仍必须写入 2 次 32 位操作数。当阵列规模从 4 扩展到 256 时，总线带宽将瞬间饱和，进入 Roofline 模型的内存受限区（Memory-bound）；
 2. **脉动阵列的空间数据复用（Spatial Data Reuse）**：

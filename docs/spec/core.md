@@ -17,7 +17,7 @@
   - **条件分支 (B-type Branch)**: `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`
   - **无条件跳转 (J-type / I-type)**: `JAL`, `JALR`
   - **长立即数构建 (U-type)**: `LUI`, `AUIPC`
-  - **系统与控制 (SYSTEM)**: `ECALL`, `EBREAK`, `FENCE` (当做 NOP), 以及核心 CSR 读写 (`CSRRW`, `CSRRS`, `CSRRC`) 【待实现：A 档模块（见 AGENTS.md）】
+  - **系统与控制 (SYSTEM)**: `ECALL`, `EBREAK`, `FENCE` (当做 NOP), 以及核心 CSR 读写 (`CSRRW`, `CSRRS`, `CSRRC`) 【后续扩展模块】
 
 ---
 

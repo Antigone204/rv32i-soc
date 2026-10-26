@@ -153,11 +153,9 @@
 │   │   ├── pango_200k_mini_pins.md  # 盘古 200K-MINI 管脚分配
 │   │   └── review_summary.md   # 核心微架构与总线设计评审总结
 │   ├── journal.md              # 开发日志与详细 Bug 记录（含现象/定位/根因/修复/教训）
-│   ├── study_guide.md          # 全系统精读手册
-│   └── interview_qa.md         # 面试技术深度 Q&A 题库
+│   └── study_guide.md          # 全系统微架构精读手册
 ├── tools/                      # 本地交叉编译工具链（xPack GCC 15.2 等，不入版本库）
-├── Makefile                    # 全工程一键式构建与自动化测试入口
-└── AGENTS.md                   # AI 协作开发准则与亲手档位规范
+└── Makefile                    # 全工程一键式构建与自动化测试入口
 ```
 
 - 全系统零基础到精通精读手册：[`docs/study_guide.md`](docs/study_guide.md)
