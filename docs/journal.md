@@ -483,3 +483,47 @@ Windows 端 Pango Design Suite (`PDS 2022.2-SP6.4 build 146967`) License 就绪�
   - 保留 `platform/pango/pangu200k_mini.fdc`（供 200K-MINI 实物板使用，已补 `create_clock`）；
   - 新增 `platform/pango/pangu_experiment_box.fdc`（将 `key[3:0]` 与 `led[3:0]` 映射至实验箱 J10 对应球号，`led[7:4]` 留驻核心板无冲突球号 `A17..B17`）；
   - 新增 `platform/pango/build_fpga_top.tcl` 与 `build_smoke_top.tcl`，固化一键可复现构建流程。
+
+---
+
+## 2026-10-27 远程实验箱首次上板实测：LED 状态面板与串口 CoreMark 100% 跑通 (阶段 B1 闭环)
+
+### 阶段目标与验证闭环
+
+在远程实验箱（`PG2L200H-6FBB676`, 27 MHz）上完成完整 RV32IM + BPU + SIMD MAC SoC (`fpga_top`) 的首次物理上板运行，同时通过实验箱 J10 面板 4 颗 LED 与 115200 物理串口双重验证 C 固件与处理器微架构的真实运行状态。
+
+### 上板排查与两项硬件修正 (BUG-008 & BUG-009)
+
+1. **[BUG-008] 远程实验箱串口通道引脚差异（`C24/B24` vs `AB26/AC26`）与仪器 FPGA 管理帧假乱码**：
+   - **现象**：初版使用底板 CP2102 引脚 `C24 (TX) / B24 (RX)` 烧录至远程实验箱后，网页串口终端未收到 ASCII 文本，而是周期性收到 `E1 E2 E3 E4 BB BB 5A A5 ...` 与 `A5 6E 12 A5 ... C0 04` 的十六进制字节流。
+   - **根因**：远程实验箱并非通过核心板底板的 CP2102 转串口接入网页终端，而是由实验箱上的**仪器 FPGA** 通过扩展口连接被测 FPGA 的 **`AB26`（被测 FPGA `uart_txd`）** 与 **`AC26`（被测 FPGA `uart_rxd`）**。当被测 FPGA 未驱动 `AB26` 时，终端回显的是仪器 FPGA 在 `AC26` 上发送的握手/状态管理帧，并非波特率失配乱码。
+   - **修复**：在 `platform/pango/pangu_experiment_box.fdc` 中将 `uart_txd` 约束至 `AB26`、`uart_rxd` 约束至 `AC26`（3.3V LVCMOS33）。重跑 PnR 与比特流后，网页串口终端（`115200 8N1`）立即清晰打印出完整的 CoreMark 跑分报告。
+2. **[BUG-009] 实验箱 J10 面板 LED 低电平点亮（Active-Low）极性反相**：
+   - **现象**：初版 `soc_top.v` 按高电平有效驱动 `led[3:0]`（`U16/U15/V17/V16`），上板后发现 CoreMark 通过时 `led[1]`（`sim_pass=1`）反而熄灭，而串口空闲时 `led[3]`（`~uart_txd=0`）反而常亮。
+   - **根因**：远程实验箱 J10 扩展面板上的 4 颗单色 LED 采用共阳极/低电平点亮设计（输出 `0` 点亮，输出 `1` 熄灭）。
+   - **修复**：在 `rtl/soc/soc_top.v` 中对实验箱对应的 `led[3:0]` 统一按低有效取反输出（`~heartbeat_cnt[24]`, `~sim_pass`, `~pass_toggle`, `uart_txd`）。
+
+### 板级实测结果（与仿真周期级 100% 吻合）
+
+1. **实验箱 LED 面板 (`led[3:0]` = `U16/U15/V17/V16`) 实测现象**：
+   - `LED0 (U16)`：约 0.8 Hz 稳定闪烁（27 MHz 时钟心跳正常）；
+   - `LED1 (U15)`：**常亮**（`sim_pass = 1`，证明 `core_main.c` 跑完且 `total_errors == 0` 写入 `0xFFFF_FFF0`）；
+   - `LED2 (V17)`：每隔约 1.5 秒翻转一次亮灭（证明 `crt0.S` 中的 `FPGA_BOARD_LOOP` 持续重跑并通过每轮 CoreMark）；
+   - `LED3 (V16)`：每轮打印报告期间高频闪烁（UART 发送活动指示正常）。
+2. **远程实验箱网页串口终端 (`115200 8N1`, `TX=AB26 / RX=AC26`) 实测输出**：
+   ```text
+   2K performance run parameters for coremark.
+   CoreMark Size    : 666
+   Total ticks      : 660,991
+   Iterations/Sec   : 0
+   Iterations       : 2
+   Compiler version : -march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP
+   Memory location  : STATIC
+   seedcrc          : 0xe9f5
+   [0]crclist       : 0xe714
+   [0]crcstate      : 0x8e3a
+   [0]crcfinal      : 0x72be
+   Correct operation validated.
+   CoreMark/MHz     : 3.025
+   ```
+   - **关键结论**：真实紫光同创 `PG2L200H-6FBB676` 芯片上 CLINT 硬件计数器测得的 CoreMark 运行周期数（`Total ticks : 660,991`）、四项 CRC 校验值（`crcfinal = 0x72be`）以及最终跑分（**`3.025 CoreMark/MHz`**）与 Mac 端 RTL 仿真结果**单拍不差（100% 精确一致）**！

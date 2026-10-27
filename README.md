@@ -5,9 +5,9 @@
 [![Lint: Verilator 0W](https://img.shields.io/badge/Verilator%20Lint-0%20Warnings-brightgreen.svg)](#)
 [![ISA Tests: 46/46 PASS](https://img.shields.io/badge/ISA%20Tests-rv32ui%2Bum%2046%2F46%20PASS-brightgreen.svg)](#)
 [![DiffTest: Spike 100%](https://img.shields.io/badge/DiffTest-Spike%20100%25%20Match-brightgreen.svg)](#)
-[![CoreMark: 3.025/MHz](https://img.shields.io/badge/CoreMark%2FMHz-3.025%20(sim)-brightgreen.svg)](#)
+[![CoreMark: 3.025/MHz](https://img.shields.io/badge/CoreMark%2FMHz-3.025%20(FPGA%20%26%20sim)-brightgreen.svg)](#)
 [![SIMD MAC: 24.98x vs soft / 3.32x vs MUL](https://img.shields.io/badge/INT8%20GEMV%20Speedup-24.98x%20vs%20soft%20%7C%203.32x%20vs%20MUL-blueviolet.svg)](#)
-[![Target: Pango Logos-2](https://img.shields.io/badge/Target%20FPGA-Pango%20Logos--2%20PG2L200H-purple.svg)](#)
+[![Target: Pango Logos-2](https://img.shields.io/badge/FPGA%20Board-PG2L200H%20Verified-brightgreen.svg)](#)
 
 > **2026 全国大学生嵌入式芯片与系统设计竞赛 · 紫光同创企业赛道 · 选题一（RISC-V 并行加速系统）**  
 > 目标硬件：远程 FPGA 实验平台 · **盘古 200K-MINI 开发板**（紫光同创 Logos-2 `PG2L200H-6FBB676`，核心板晶振 27 MHz）
@@ -43,7 +43,7 @@
 | **阶段 M1<br>(RV32M 硬件乘除)** | • 33×33 符号扩展单周期/打一拍硬件乘法器 (`MUL/MULH/MULHSU/MULHU`)<br>• 32 拍恢复余数试商除法器 + 除零/溢出 1 拍快速旁路 (`DIV/DIVU/REM/REMU`)<br>• 配套方案对比讲义 [`docs/spec/m_ext.md`](docs/spec/m_ext.md) | • 消除 87.4 万条软乘除循环指令<br>• **CoreMark 跃升至 `2.533 CoreMark/MHz` (+164.4%)**<br>• 官方 `rv32um` 8/8 PASS + Spike DiffTest 8/8 MATCH | ✅ 已完成 |
 | **阶段 P1<br>(动态分支预测)** | • IF 级 64 项直接映射 BTB + 2-bit 饱和计数器 BHT (`rtl/core/bpu.v`)<br>• Taken-only 动态表项分配 + 无条件跳转标识 `btb_uncond`<br>• 预测随流水级前传、EX 级精确纠偏，实现 **0 气泡跳转**<br>• 配套方案对比讲义 [`docs/spec/bpu.md`](docs/spec/bpu.md) | • **CoreMark 突破 `3.025 CoreMark/MHz` (+215.8% vs 基线)**<br>• CoreMark 计时区间 Ticks `789,387` → `660,991`（-16.3%）<br>• 整机 CPI 1.53 → 1.22（注：含 UART 忙等循环，仅作参考） | ✅ 已完成 |
 | **阶段 A1<br>(并行算子加速)** | • Wishbone 4 路并行 SIMD INT8 乘累加器 (`rtl/acc/wb_mac_acc.v`, `0x2000_0000`)<br>• 隐式写触发 (`ACC_OPB_TRIG`) + 偏置预载 + 硬件零延迟 ReLU 激活读端口<br>• 配套方案对比讲义 [`docs/spec/acc.md`](docs/spec/acc.md) | • $16\times 64$ INT8 全连接层 (1024 MACs + Bias + ReLU) 100% 吻合<br>• **相对软乘基线加速 `24.98x`** (`63,377` → `2,537` 周期)<br>• **相对 RV32IM 标量硬件 MUL 加速 `3.32x`** (`8,418` → `2,537` 周期) | ✅ 已完成 |
-| **阶段 B1<br>(FPGA 板级综合)** | • 盘古 200K-MINI / 远程实验箱 (`PG2L200H-6FBB676`, 27 MHz) 约束与顶层 `fpga_top.v`<br>• 命令行无 GUI 一键综合脚本 (`build_fpga_top.tcl`) 与 DRM 固件预置 (`firmware_words.hex`)<br>• 区分 200K-MINI 实物板 (`pangu200k_mini.fdc`) 与远程实验箱 (`pangu_experiment_box.fdc`) | • **PDS 2022.2-SP6.4 全流程综合与比特流生成通过**<br>• 资源：**3,359 LUT (2.10%) / 5,067 FF (1.59%) / 33 DRM (7.95%) / 8 APM**<br>• 时序：**WNS `+19.804 ns`，$F_{\max} = 58.03\text{ MHz}$** (0 违例)<br>• 待补齐远程实验箱 UART 引脚后上板观测 | 🔜 待实验箱 UART 引脚 |
+| **阶段 B1<br>(FPGA 上板实测)** | • 盘古 200K-MINI / 远程实验箱 (`PG2L200H-6FBB676`, 27 MHz) 约束与顶层 `fpga_top.v`<br>• 命令行无 GUI 一键综合脚本 (`build_fpga_top.tcl`) 与 DRM 固件预置 (`firmware_words.hex`)<br>• 适配远程实验箱 J10 低有效 LED (`U16/U15/V17/V16`) 与平台串口 (`TX=AB26, RX=AC26`) | • **PDS 2022.2-SP6.4 综合与远程实验箱上板实测 PASS**<br>• 资源：**3,359~3,785 LUT (~2.2%) / 5,069 FF (1.59%) / 33 DRM (7.95%) / 8 APM**<br>• 时序：**WNS `+20.228 ns`，$F_{\max} = 58.03\text{ MHz}$** (0 违例)<br>• **板级串口实测：`CoreMark/MHz = 3.025` (`660,991` ticks, `crcfinal=0x72be`)，与仿真单拍不差** | ✅ 已完成 |
 
 ---
 

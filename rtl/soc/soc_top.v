@@ -309,11 +309,13 @@ module soc_top #(
         end
     end
 
-    assign led[0]   = heartbeat_cnt[24]; // U16: 硬件时钟心跳 (~0.8 Hz 闪烁)
-    assign led[1]   = sim_pass;          // U15: C 程序/CoreMark 校验 PASS 指示 (通过后常亮)
-    assign led[2]   = pass_toggle;       // V17: 每轮 CoreMark 循环完成翻转一次 (~2.5s 翻转)
-    assign led[3]   = ~uart_txd;         // V16: UART 串口发送活动指示 (打印跑分报告时闪烁)
-    assign led[7:4] = wb_pc[5:2];        // 核心板 LED[7:4]: PC 指针跳动指示
+    // 远程实验箱面板上的 4 颗 LED 为低电平点亮（Matrix_led 例程按低有效验证），
+    // 因此 led[3:0] 统一取反；核心板 led[7:4] 保持原极性。
+    assign led[0]   = ~heartbeat_cnt[24]; // U16: 硬件时钟心跳 (~0.8 Hz 闪烁)
+    assign led[1]   = ~sim_pass;          // U15: C 程序/CoreMark 校验 PASS 指示 (通过后常亮)
+    assign led[2]   = ~pass_toggle;       // V17: 每轮 CoreMark 循环完成翻转一次 (~1.5s 翻转)
+    assign led[3]   = uart_txd;           // V16: UART 串口发送活动指示 (打印跑分报告时闪烁)
+    assign led[7:4] = wb_pc[5:2];         // 核心板 LED[7:4]: PC 指针跳动指示
 
 endmodule
 `default_nettype wire

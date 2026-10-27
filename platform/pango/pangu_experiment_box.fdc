@@ -9,7 +9,7 @@
 #       led[3:0] : U16, U15, V17, V16
 #   - led[7:4] 暂保持映射到核心板板载 LED (A17, A18, C17, B17, Bank L3，无冲突)，
 #     使顶层无需修改端口位宽即可直接复用；
-#   - uart_txd/rxd 暂挂底板 CP2102 (C24/B24)，待补充实验箱 UART 例程实测球号。
+#   - uart_txd/rxd 使用远程实验箱串口：TX=AB26，RX=AC26（3.3V LVCMOS33）。
 # -----------------------------------------------------------------------------
 
 define_attribute {p:sys_clk} {PAP_IO_DIRECTION} {INPUT}
@@ -112,9 +112,9 @@ define_attribute {p:led[7]} {PAP_IO_DRIVE} {8}
 define_attribute {p:led[7]} {PAP_IO_NONE} {TRUE}
 define_attribute {p:led[7]} {PAP_IO_SLEW} {SLOW}
 
-# TODO: 待从远程平台 UART 例程确认实验箱串口球号（当前暂置底板 CP2102 引脚 C24/B24）
+# 远程实验箱串口（平台确认）：TX=AB26，RX=AC26
 define_attribute {p:uart_txd} {PAP_IO_DIRECTION} {OUTPUT}
-define_attribute {p:uart_txd} {PAP_IO_LOC} {C24}
+define_attribute {p:uart_txd} {PAP_IO_LOC} {AB26}
 define_attribute {p:uart_txd} {PAP_IO_VCCIO} {3.3}
 define_attribute {p:uart_txd} {PAP_IO_STANDARD} {LVCMOS33}
 define_attribute {p:uart_txd} {PAP_IO_DRIVE} {8}
@@ -122,7 +122,7 @@ define_attribute {p:uart_txd} {PAP_IO_NONE} {TRUE}
 define_attribute {p:uart_txd} {PAP_IO_SLEW} {SLOW}
 
 define_attribute {p:uart_rxd} {PAP_IO_DIRECTION} {INPUT}
-define_attribute {p:uart_rxd} {PAP_IO_LOC} {B24}
+define_attribute {p:uart_rxd} {PAP_IO_LOC} {AC26}
 define_attribute {p:uart_rxd} {PAP_IO_VCCIO} {3.3}
 define_attribute {p:uart_rxd} {PAP_IO_STANDARD} {LVCMOS33}
 define_attribute {p:uart_rxd} {PAP_IO_NONE} {TRUE}
