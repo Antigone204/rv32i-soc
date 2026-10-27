@@ -286,20 +286,34 @@ module soc_top #(
     );
 
     // =========================================================================
-    // 8. 心跳与状态指示 LED
+    // 8. 心跳与软件自检状态指示 LED (适配远程实验箱 led[3:0] 与核心板 led[7:0])
     // =========================================================================
     reg [24:0] heartbeat_cnt;
+    reg        sim_pass;
+    reg        pass_toggle;
+
     always @(posedge clk) begin
         if (!rst_n) begin
             heartbeat_cnt <= 25'd0;
+            sim_pass      <= 1'b0;
+            pass_toggle   <= 1'b0;
         end else begin
             heartbeat_cnt <= heartbeat_cnt + 25'd1;
+            // 监听 CPU 写 SIM_CTRL (0xFFFF_FFF0)：写入 1 代表 main() 返回 0 (自检/CoreMark PASS)
+            if (wbm_cyc && wbm_stb && wbm_we && (wbm_adr == 32'hFFFF_FFF0)) begin
+                sim_pass <= (wbm_dat_w == 32'd1);
+                if (wbm_dat_w == 32'd1) begin
+                    pass_toggle <= ~pass_toggle;
+                end
+            end
         end
     end
 
-    assign led[0]   = heartbeat_cnt[24]; // 约 1.5 Hz 闪烁证明系统主频正常
-    assign led[1]   = wb_valid;          // 指令退休指示
-    assign led[7:2] = wb_pc[7:2];        // PC 指针低位跳动指示程序流动
+    assign led[0]   = heartbeat_cnt[24]; // U16: 硬件时钟心跳 (~0.8 Hz 闪烁)
+    assign led[1]   = sim_pass;          // U15: C 程序/CoreMark 校验 PASS 指示 (通过后常亮)
+    assign led[2]   = pass_toggle;       // V17: 每轮 CoreMark 循环完成翻转一次 (~2.5s 翻转)
+    assign led[3]   = ~uart_txd;         // V16: UART 串口发送活动指示 (打印跑分报告时闪烁)
+    assign led[7:4] = wb_pc[5:2];        // 核心板 LED[7:4]: PC 指针跳动指示
 
 endmodule
 `default_nettype wire

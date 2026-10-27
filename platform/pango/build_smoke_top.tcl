@@ -11,7 +11,7 @@ add_design "$REPO_ROOT/platform/pango/smoke_top.v"
 add_design "$REPO_ROOT/rtl/soc/uart_tx.v"
 add_design "$REPO_ROOT/rtl/soc/uart_rx.v"
 
-add_constraint "$REPO_ROOT/platform/pango/pangu200k_mini.fdc"
+add_constraint "$REPO_ROOT/platform/pango/pangu_experiment_box.fdc"
 
 compile -top_module smoke_top
 synthesize -ads

@@ -44,8 +44,8 @@ add_design "$REPO_ROOT/rtl/soc/uart_rx.v"
 # 硬件加速器
 add_design "$REPO_ROOT/rtl/acc/wb_mac_acc.v"
 
-# 约束文件（默认 200K-MINI 核心板；若跑远程实验箱可改为 pangu_experiment_box.fdc）
-add_constraint "$REPO_ROOT/platform/pango/pangu200k_mini.fdc"
+# 约束文件（默认使用远程实验箱 pangu_experiment_box.fdc；若跑 200K-MINI 实物板可改为 pangu200k_mini.fdc）
+add_constraint "$REPO_ROOT/platform/pango/pangu_experiment_box.fdc"
 
 compile -top_module fpga_top -include_path "$REPO_ROOT/rtl/core"
 synthesize -ads
