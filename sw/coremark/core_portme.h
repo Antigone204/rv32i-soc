@@ -72,7 +72,11 @@ typedef double         ee_f32;
 typedef uint64_t CORE_TICKS;
 typedef uint64_t CORETICKS;
 
+#ifdef FPGA_BOARD_LOOP
+#define EE_TICKS_PER_SEC 27000000
+#else
 #define EE_TICKS_PER_SEC 1000
+#endif
 
 /* 5. 迭代次数与内存配置 */
 #ifndef ITERATIONS

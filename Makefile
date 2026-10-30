@@ -175,7 +175,7 @@ FPGA_FW_HEX    := platform/pango/firmware_words.hex
 
 $(BUILD)/coremark_board.elf: $(SW_COMMON_SRCS) $(COREMARK_SRCS) sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/coremark/coremark.h sw/coremark/core_portme.h
 	@mkdir -p $(BUILD)
-	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DITERATIONS=2 -DFLAGS_STR="\"-march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
+	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DITERATIONS=1000 -DFLAGS_STR="\"-march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
 
 $(BUILD)/coremark_board.bin: $(BUILD)/coremark_board.elf
 	$(CROSS)objcopy -O binary $< $@
