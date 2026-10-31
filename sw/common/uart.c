@@ -1,5 +1,27 @@
 #include "soc.h"
 #include "uart.h"
+#include "timer.h"
+
+#ifndef UART_THROTTLE_BYTES
+#ifdef FPGA_BOARD_LOOP
+#define UART_THROTTLE_BYTES 40      /* 每 N 字节停一次；0 = 关闭 */
+#else
+#define UART_THROTTLE_BYTES 0
+#endif
+#endif
+
+#ifndef UART_THROTTLE_MS
+#define UART_THROTTLE_MS    250     /* 停 M 毫秒 */
+#endif
+
+#if UART_THROTTLE_BYTES > 0
+static void delay_ms(uint32_t ms) {
+    uint32_t t0 = get_time_lo();
+    while ((uint32_t)(get_time_lo() - t0) < ms * 27000U) {
+        ;
+    }
+}
+#endif
 
 void uart_init(void) {
     UART_TXCTRL_REG = 1UL;
@@ -12,6 +34,14 @@ void uart_putc(int ch) {
         ;
     }
     UART_TXDATA_REG = (uint32_t)(ch & 0xFF);
+
+#if UART_THROTTLE_BYTES > 0
+    static uint32_t n = 0;
+    if (++n >= (uint32_t)UART_THROTTLE_BYTES) {
+        n = 0;
+        delay_ms(UART_THROTTLE_MS);
+    }
+#endif
 }
 
 int uart_getc_nonblock(void) {

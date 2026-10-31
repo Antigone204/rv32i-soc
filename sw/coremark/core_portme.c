@@ -71,6 +71,22 @@ secs_ret time_in_secs(CORE_TICKS ticks) {
 #define M_ROWS 16
 #define K_COLS 64
 
+#ifndef USE_ANSI_COLOR
+#define USE_ANSI_COLOR 0
+#endif
+
+#if USE_ANSI_COLOR
+#define C_HEAD "\x1b[36m"
+#define C_PASS "\x1b[1;32m"
+#define C_FAIL "\x1b[1;31m"
+#define C_OFF  "\x1b[0m"
+#else
+#define C_HEAD "" 
+#define C_PASS ""
+#define C_FAIL ""
+#define C_OFF  ""
+#endif
+
 static int8_t  g_weights[M_ROWS][K_COLS] __attribute__((aligned(4)));
 static int8_t  g_inputs[K_COLS]          __attribute__((aligned(4)));
 static int32_t g_biases[M_ROWS];
@@ -147,13 +163,117 @@ static void run_accelerator(void) {
     }
 }
 
+static int format_u32_commas(char *out, uint32_t v) {
+    char b[12];
+    int n = 0;
+    int len = 0;
+    do {
+        b[n++] = (char)('0' + (v % 10U));
+        v /= 10U;
+    } while (v);
+    while (n--) {
+        out[len++] = b[n];
+        if (n > 0 && (n % 3) == 0) {
+            out[len++] = ',';
+        }
+    }
+    out[len] = '\0';
+    return len;
+}
+
+static void put_pad(int n) {
+    while (n-- > 0) {
+        ee_printf(" ");
+    }
+}
+
+static int str_len(const char *s) {
+    int n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+static void format_mac_per_cyc(char *out, uint32_t cyc) {
+    if (cyc == 0) {
+        out[0] = '-'; out[1] = '-'; out[2] = '\0';
+        return;
+    }
+    uint32_t val = (uint32_t)((1024ULL * 1000U + cyc / 2U) / cyc);
+    uint32_t ip = val / 1000U;
+    uint32_t fp = val % 1000U;
+    char ib[12];
+    int in = 0, len = 0;
+    do {
+        ib[in++] = (char)('0' + (ip % 10U));
+        ip /= 10U;
+    } while (ip);
+    while (in--) {
+        out[len++] = ib[in];
+    }
+    out[len++] = '.';
+    out[len++] = (char)('0' + (fp / 100U));
+    out[len++] = (char)('0' + ((fp / 10U) % 10U));
+    out[len++] = (char)('0' + (fp % 10U));
+    out[len] = '\0';
+}
+
+static void format_speedup(char *out, uint32_t base_cyc, uint32_t cyc, int is_na) {
+    if (is_na || cyc == 0) {
+        out[0] = '-'; out[1] = '-'; out[2] = '\0';
+        return;
+    }
+    uint32_t val = (uint32_t)(((uint64_t)base_cyc * 100ULL + cyc / 2U) / cyc);
+    uint32_t ip = val / 100U;
+    uint32_t fp = val % 100U;
+    char ib[12];
+    int in = 0, len = 0;
+    do {
+        ib[in++] = (char)('0' + (ip % 10U));
+        ip /= 10U;
+    } while (ip);
+    while (in--) {
+        out[len++] = ib[in];
+    }
+    out[len++] = '.';
+    out[len++] = (char)('0' + (fp / 10U));
+    out[len++] = (char)('0' + (fp % 10U));
+    out[len++] = 'x';
+    out[len] = '\0';
+}
+
+static void print_table_row(const char *label, uint32_t cyc, uint32_t base_soft, uint32_t base_scalar, int is_na_scalar) {
+    char c_buf[16];
+    char m_buf[16];
+    char s_soft_buf[16];
+    char s_scal_buf[16];
+
+    format_u32_commas(c_buf, cyc);
+    format_mac_per_cyc(m_buf, cyc);
+    format_speedup(s_soft_buf, base_soft, cyc, 0);
+    format_speedup(s_scal_buf, base_scalar, cyc, is_na_scalar);
+
+    ee_printf("  %s", label);
+    put_pad(20 - str_len(label));
+
+    put_pad(8 - str_len(c_buf));
+    ee_printf("%s", c_buf);
+
+    put_pad(10 - str_len(m_buf));
+    ee_printf("%s", m_buf);
+
+    put_pad(10 - str_len(s_soft_buf));
+    ee_printf("%s", s_soft_buf);
+
+    put_pad(10 - str_len(s_scal_buf));
+    ee_printf("%s\n", s_scal_buf);
+}
+
 static void run_board_acc_benchmark(void) {
-    printf("\n============================================================\n");
-    printf("   Pango Logos-2 PG2L200H RISC-V Parallel Acc SoC\n");
-    printf("   CPU: RV32IM + BTB/BHT | Clock: 27 MHz | Bus: Wishbone B4\n");
-    printf("   Acc: 4-way SIMD INT8 MAC @ 0x20000000\n");
-    printf("============================================================\n");
-    printf("   Workload: GEMV/FC Layer 16x64 INT8 (1024 MACs + Bias + ReLU)\n");
+    ee_printf("============================================================\n");
+    ee_printf("  Pango Logos-2 PG2L200H   RV32IM + SIMD Accel SoC\n");
+    ee_printf("  CPU  RV32IM+BPU(BTB/BHT)   Clock 27MHz   Wishbone B4\n");
+    ee_printf("============================================================\n");
+    ee_printf("  GEMV 16x64 INT8 = 1024 MACs + bias + ReLU\n\n");
 
     init_dataset();
 
@@ -175,39 +295,28 @@ static void run_board_acc_benchmark(void) {
     int mismatch = 0;
     for (int r = 0; r < M_ROWS; r++) {
         if (g_out_soft[r] != g_out_scalar[r] || g_out_scalar[r] != g_out_acc[r]) {
-            printf("[ERROR] Mismatch at row %d: Soft=%d, Scalar=%d, Acc=%d\n",
-                   r, g_out_soft[r], g_out_scalar[r], g_out_acc[r]);
+            ee_printf("[ERROR] Mismatch at row %d: Soft=%d, Scalar=%d, Acc=%d\n",
+                      r, g_out_soft[r], g_out_scalar[r], g_out_acc[r]);
             mismatch++;
         }
     }
 
     if (mismatch != 0) {
-        printf(">>> ACCELERATOR VERIFICATION FAILED (%d mismatches) <<<\n", mismatch);
+        ee_printf("%s  RESULT  ACCELERATOR FAILED  (%d mismatches)%s\n", C_FAIL, mismatch, C_OFF);
         SIM_CTRL_REG = 0xDEAD0000UL;
         while (1) {}
     }
 
-    printf("\n--- Performance Breakdown (1024 MACs) ---\n");
-    printf("[1] Soft Shift-Add (RV32I) : %u cycles\n", cyc_soft);
-    printf("[2] Scalar HW Mul  (RV32IM): %u cycles\n", cyc_scalar);
-    printf("[3] SIMD INT8 Acc  (MMIO)  : %u cycles\n", cyc_acc);
+    ee_printf("%s  Implementation        Cycles   MAC/cyc   vs soft vs scalar%s\n", C_HEAD, C_OFF);
+    ee_printf("  ----------------------------------------------------------\n");
 
-    uint32_t speedup_scalar_vs_soft_x100 = (cyc_soft * 100U) / cyc_scalar;
-    uint32_t speedup_acc_vs_scalar_x100  = (cyc_scalar * 100U) / cyc_acc;
-    uint32_t speedup_acc_vs_soft_x100    = (cyc_soft * 100U) / cyc_acc;
+    print_table_row("[1] Soft shift-add", cyc_soft, cyc_soft, cyc_scalar, 1);
+    print_table_row("[2] Scalar mul", cyc_scalar, cyc_soft, cyc_scalar, 0);
+    print_table_row("[3] SIMD INT8 acc", cyc_acc, cyc_soft, cyc_scalar, 0);
 
-    printf("\n--- Speedup Analysis ---\n");
-    printf("CPU Scalar vs Soft Baseline : %u.%02u x\n",
-           speedup_scalar_vs_soft_x100 / 100U, speedup_scalar_vs_soft_x100 % 100U);
-    printf("SIMD Acc   vs CPU Scalar    : %u.%02u x\n",
-           speedup_acc_vs_scalar_x100 / 100U, speedup_acc_vs_scalar_x100 % 100U);
-    printf("SIMD Acc   vs Soft Baseline : %u.%02u x\n",
-           speedup_acc_vs_soft_x100 / 100U, speedup_acc_vs_soft_x100 % 100U);
-
-    printf("\n------------------------------------------------------------\n");
-    printf(">>> ACCELERATOR VERIFICATION PASSED <<<\n");
-    printf("------------------------------------------------------------\n");
-    printf(">>> Starting EEMBC CoreMark 2K Performance Run (1000 Iterations, >10s @ 27MHz)...\n\n");
+    ee_printf("  ----------------------------------------------------------\n");
+    ee_printf("%s  RESULT  ACCELERATOR PASSED  (16/16 rows)%s\n\n", C_PASS, C_OFF);
+    ee_printf("  Next    EEMBC CoreMark 2K, 1000 iterations (~12 s)\n\n");
 }
 #endif
 

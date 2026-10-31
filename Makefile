@@ -171,11 +171,13 @@ coremark: $(BUILD)/coremark.hex
 	@grep -q "CoreMark/MHz" $(BUILD)/coremark.log
 	@grep -q "SOC VERIFICATION PASSED" $(BUILD)/coremark.log
 
-FPGA_FW_HEX    := platform/pango/firmware_words.hex
+FPGA_FW_HEX        := platform/pango/firmware_words.hex
+FPGA_FW_SLOW_HEX   := platform/pango/firmware_words_slow.hex
+FPGA_FW_COLOR_HEX  := platform/pango/firmware_words_color.hex
 
 $(BUILD)/coremark_board.elf: $(SW_COMMON_SRCS) $(COREMARK_SRCS) sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/coremark/coremark.h sw/coremark/core_portme.h
 	@mkdir -p $(BUILD)
-	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DITERATIONS=1000 -DFLAGS_STR="\"-march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
+	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DUART_THROTTLE_BYTES=40 -DUART_THROTTLE_MS=250 -DUSE_ANSI_COLOR=0 -DITERATIONS=1000 -DFLAGS_STR="\"-march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
 
 $(BUILD)/coremark_board.bin: $(BUILD)/coremark_board.elf
 	$(CROSS)objcopy -O binary $< $@
@@ -183,7 +185,27 @@ $(BUILD)/coremark_board.bin: $(BUILD)/coremark_board.elf
 $(FPGA_FW_HEX): $(BUILD)/coremark_board.bin sw/common/bin2words.py
 	python3 sw/common/bin2words.py $< $@ 16384
 
-fpga-fw: $(FPGA_FW_HEX)
+$(BUILD)/coremark_board_slow.elf: $(SW_COMMON_SRCS) $(COREMARK_SRCS) sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/coremark/coremark.h sw/coremark/core_portme.h
+	@mkdir -p $(BUILD)
+	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DUART_THROTTLE_BYTES=32 -DUART_THROTTLE_MS=300 -DUSE_ANSI_COLOR=0 -DITERATIONS=1000 -DFLAGS_STR="\"-march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
+
+$(BUILD)/coremark_board_slow.bin: $(BUILD)/coremark_board_slow.elf
+	$(CROSS)objcopy -O binary $< $@
+
+$(FPGA_FW_SLOW_HEX): $(BUILD)/coremark_board_slow.bin sw/common/bin2words.py
+	python3 sw/common/bin2words.py $< $@ 16384
+
+$(BUILD)/coremark_board_color.elf: $(SW_COMMON_SRCS) $(COREMARK_SRCS) sw/common/link.ld sw/common/soc.h sw/common/uart.h sw/common/timer.h sw/coremark/coremark.h sw/coremark/core_portme.h
+	@mkdir -p $(BUILD)
+	$(CROSS)gcc -march=rv32im_zicsr -mabi=ilp32 -O2 -ffreestanding -nostdlib -nostartfiles -Wl,--no-warn-rwx-segments -Isw/common -Isw/coremark -DFPGA_BOARD_LOOP -DUART_THROTTLE_BYTES=40 -DUART_THROTTLE_MS=250 -DUSE_ANSI_COLOR=1 -DITERATIONS=1000 -DFLAGS_STR="\"-march=rv32im_zicsr -mabi=ilp32 -O2 -lgcc -DFPGA_BOARD_LOOP\"" -Tsw/common/link.ld $(SW_COMMON_SRCS) sw/coremark/*.c -lgcc -o $@
+
+$(BUILD)/coremark_board_color.bin: $(BUILD)/coremark_board_color.elf
+	$(CROSS)objcopy -O binary $< $@
+
+$(FPGA_FW_COLOR_HEX): $(BUILD)/coremark_board_color.bin sw/common/bin2words.py
+	python3 sw/common/bin2words.py $< $@ 16384
+
+fpga-fw: $(FPGA_FW_HEX) $(FPGA_FW_SLOW_HEX) $(FPGA_FW_COLOR_HEX)
 
 test-core:
 	@mkdir -p $(BUILD)
