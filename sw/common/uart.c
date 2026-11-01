@@ -2,19 +2,24 @@
 #include "uart.h"
 #include "timer.h"
 
+/* ---- 按字节限速：保留但默认关闭 ---- */
 #ifndef UART_THROTTLE_BYTES
-#ifdef FPGA_BOARD_LOOP
-#define UART_THROTTLE_BYTES 40      /* 每 N 字节停一次；0 = 关闭 */
-#else
 #define UART_THROTTLE_BYTES 0
 #endif
-#endif
-
 #ifndef UART_THROTTLE_MS
-#define UART_THROTTLE_MS    250     /* 停 M 毫秒 */
+#define UART_THROTTLE_MS 0
 #endif
 
-#if UART_THROTTLE_BYTES > 0
+/* ---- 按行限速：本次新增 ---- */
+#ifndef UART_THROTTLE_LINE_MS
+#ifdef FPGA_BOARD_LOOP
+#define UART_THROTTLE_LINE_MS 600     /* 必须大于平台 500 ms 轮询周期 */
+#else
+#define UART_THROTTLE_LINE_MS 0
+#endif
+#endif
+
+#if (UART_THROTTLE_BYTES > 0) || (UART_THROTTLE_LINE_MS > 0)
 static void delay_ms(uint32_t ms) {
     uint32_t t0 = get_time_lo();
     while ((uint32_t)(get_time_lo() - t0) < ms * 27000U) {
@@ -40,6 +45,12 @@ void uart_putc(int ch) {
     if (++n >= (uint32_t)UART_THROTTLE_BYTES) {
         n = 0;
         delay_ms(UART_THROTTLE_MS);
+    }
+#endif
+
+#if UART_THROTTLE_LINE_MS > 0
+    if ((char)ch == '\n') {          /* 整行发完再停，保证下一包从行首开始 */
+        delay_ms(UART_THROTTLE_LINE_MS);
     }
 #endif
 }
